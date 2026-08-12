@@ -19,7 +19,8 @@ PROG = "scope_et120"
 
 def _connect(args):
     port = resolve_port(args.port)
-    scope = Scope(port, verbose=args.verbose)
+    scope = Scope(port, verbose=args.verbose,
+                  min_interval=getattr(args, "interval", None))
     mode = scope.ping()
     if mode is None:
         scope.close()
@@ -230,7 +231,7 @@ def cmd_sniff(args):
         while time.time() < end:
             if time.time() >= nxt:
                 scope.send(args.cmd)
-                nxt = time.time() + args.interval
+                nxt = time.time() + args.poll
             chunk = scope.sp.read(65536)
             if chunk:
                 scope.log += chunk
@@ -344,6 +345,10 @@ def build_parser():
                     help="serial port, e.g. COM5 or /dev/ttyACM0. Autodetected by "
                          "USB vendor ID if omitted.")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--interval", type=float, default=None, metavar="SEC",
+                    help="minimum seconds between commands (default 1.0, matching "
+                         "the vendor application's polling rate). Lowering it makes "
+                         "captures faster and has been seen to hang the instrument.")
     ap.add_argument("--version", action="version", version="%s %s" % (PROG, __version__))
     sub = ap.add_subparsers(dest="cmd")
 
@@ -389,7 +394,8 @@ def build_parser():
     p.add_argument("-o", "--output", default="dump.bin", metavar="FILE")
     p.add_argument("--cmd", type=int, default=CMD_DEEP, metavar="N",
                    help="command byte to poll with")
-    p.add_argument("--interval", type=float, default=1.0, metavar="SEC")
+    p.add_argument("--poll", type=float, default=1.0, metavar="SEC",
+                   help="seconds between poll commands while sniffing")
     p.add_argument("--seconds", type=float, default=6.0, metavar="SEC")
     p.set_defaults(func=cmd_sniff)
 

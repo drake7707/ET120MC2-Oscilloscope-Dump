@@ -56,9 +56,12 @@ def resolve_port(explicit=None):
 class Scope(object):
     """A connection to the instrument."""
 
-    def __init__(self, port, baud=115200, verbose=False):
+    def __init__(self, port, baud=115200, verbose=False, min_interval=None):
         serial = _import_serial()
         self.port_name = port
+        self.min_interval = (self.MIN_COMMAND_INTERVAL if min_interval is None
+                             else min_interval)
+        self._last_send = 0.0
         try:
             # Match the vendor application's port configuration exactly. It
             # uses .NET's SerialPort and sets only BaudRate, Parity, StopBits,
@@ -138,7 +141,18 @@ class Scope(object):
     # exists to preserve.
     DEEP_RUN_WARN = 20
 
+    # Minimum spacing between commands. The vendor application polls once a
+    # second and reads continuously in between, and that cadence has been run
+    # for 90 seconds against this instrument without provoking the hard hang --
+    # whereas issuing commands back to back does provoke it. Pacing to match is
+    # the one pattern actually demonstrated to be safe, so it is the default.
+    MIN_COMMAND_INTERVAL = 1.0
+
     def send(self, cmd, param=0):
+        gap = self.min_interval - (time.time() - self._last_send)
+        if gap > 0:
+            time.sleep(gap)
+        self._last_send = time.time()
         if cmd == CMD_DEEP:
             self._deep_run += 1
             if self._deep_run == self.DEEP_RUN_WARN:

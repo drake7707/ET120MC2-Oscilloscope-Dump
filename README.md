@@ -330,16 +330,20 @@ Read these before planning anything around this instrument.
   No serial command recovers this state — `unfreeze` included; it is worth one
   try for the milder lock above, but do not keep poking a hot instrument.
 
-  **The cause is not known.** It has been seen after exchanges as small as a
-  ping plus two live-mode requests, so it is not simply a matter of sending too
-  much or sending the wrong command. The port configuration now matches the
-  vendor application exactly — including DTR and RTS held low, which pyserial
-  otherwise raises — and that did not stop it.
+  **The cause is not pinned down, but command pacing is strongly implicated.**
+  The vendor application polls once a second and reads continuously in
+  between, and never disturbs the instrument. Reproducing exactly that cadence
+  from Python — one command per second, port held open — ran for 90 seconds
+  with no hang. Issuing commands back to back does hang it, sometimes after
+  only a handful.
 
-  What is left pointing at the instrument rather than the host: the heat, which
-  means firmware spinning rather than a protocol state; the serial interface
-  continuing to answer from interrupt context while the main loop is dead; and
-  the fact that no command sequence recovers it.
+  So commands are paced at one per second by default, matching the vendor.
+  That is why a capture takes seconds rather than milliseconds. `--interval`
+  changes it; lowering it is faster and has been seen to hang the instrument.
+
+  (The port configuration also matches the vendor application exactly now,
+  DTR and RTS held low included, which pyserial otherwise raises. That turned
+  out not to be the cause, but there is no reason to differ.)
 
   Long runs of deep-record (command 4) requests with no command 3 between them
   are a separate and better-established hazard, so nothing here polls that way
