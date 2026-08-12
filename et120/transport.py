@@ -178,26 +178,40 @@ class Scope(object):
         it to change detects a new acquisition, which -- with the trigger set
         to Single or Normal -- means the event happened.
 
-        The poll interval is deliberately unhurried. Sustained back-to-back
-        requests are the most plausible way to provoke the remote-mode lock
-        described in README.md, which can need a full USB-disconnect and power
-        cycle to clear, so waiting a second longer for a trigger is a good
-        trade. This has not been pinned to a specific cause, so treat the
-        interval as a precaution rather than a proven fix.
+        Polling is done with the *screen* record (command 3), not the deep one.
+        Command 4 is what puts the instrument into its held remote state, and
+        issuing a long run of them back to back drives it into a lock that a
+        power cycle alone will not clear. Command 3 is the live-mode request,
+        it is a third of the size, and the display changes when a trigger
+        fires just as the deep buffer does -- so it detects the event just as
+        well without the damage. The deep record is then fetched exactly once.
 
         Returns a Record, or None if nothing triggered within the timeout.
         """
-        base = self.fetch_held(deep=deep, quiet=True)
-        base_raw = next(iter(base.channels.values())).raw.tobytes()
+        def screen_signature():
+            self.drain()
+            self.send(CMD_SCREEN)
+            pkt = self.read_packet(PKT_SCREEN, 2.5)
+            if pkt is None or len(pkt) < SCREEN_PACKET_LEN:
+                return None
+            return bytes(pkt[2:1202])           # both channels' sample blocks
+
+        base = screen_signature()
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(poll)
-            try:
-                rec = self.fetch_held(deep=deep, quiet=True)
-            except RuntimeError:
+            sig = screen_signature()
+            if sig is None:
                 continue
-            if next(iter(rec.channels.values())).raw.tobytes() != base_raw:
-                return rec
+            if base is None:
+                base = sig
+                continue
+            if sig != base:
+                # Something triggered. Collect the deep record for the real
+                # data -- once, not in a loop.
+                if not deep:
+                    return self.fetch_held(deep=False, quiet=True)
+                return self.fetch_held(deep=True, quiet=True)
         return None
 
     def fetch_held(self, deep=True, tries=6, timeout=4.0, quiet=False):
@@ -268,10 +282,16 @@ class Scope(object):
         last one would leave it freshly frozen on the way out.
         """
         try:
-            self.drain()
-            self.send(CMD_SCREEN)
-            self.read_packet(PKT_SCREEN, 2.0)
-            time.sleep(0.2)
+            # Two spaced live-mode requests, not a tight retry loop. One is
+            # sometimes not enough to get the instrument out of remote hold
+            # after a lot of deep-record traffic; hammering it is worse than
+            # useless, because each command re-freezes the panel and the last
+            # one would leave it freshly frozen on the way out.
+            for _ in range(2):
+                self.drain()
+                self.send(CMD_SCREEN)
+                self.read_packet(PKT_SCREEN, 2.0)
+                time.sleep(0.3)
             return True
         except Exception:
             return False
