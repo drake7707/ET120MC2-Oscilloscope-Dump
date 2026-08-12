@@ -71,6 +71,7 @@ class Scope(object):
         self.buf = bytearray()
         self.log = bytearray()
         self.verbose = verbose
+        self._deep_run = 0
         time.sleep(0.2)
         self.sp.reset_input_buffer()
 
@@ -82,7 +83,26 @@ class Scope(object):
         except Exception:
             pass
 
+    # A long uninterrupted run of deep-record requests is what drives the
+    # instrument into the hard lock described in README.md -- the one that
+    # needs a USB disconnect and power cycle. Command 3 returns it to live
+    # mode and resets the count. This is a tripwire, not a cure: it warns
+    # rather than injecting a command 3, because that would re-arm the
+    # acquisition and discard a held trigger, which is exactly what --hold
+    # and --wait exist to preserve.
+    DEEP_RUN_WARN = 20
+
     def send(self, cmd, param=0):
+        if cmd == CMD_DEEP:
+            self._deep_run += 1
+            if self._deep_run == self.DEEP_RUN_WARN:
+                print("warning: %d deep-record requests in a row with no live-mode "
+                      "request between\n         them. That pattern has locked this "
+                      "instrument hard enough to need a USB\n         disconnect and "
+                      "power cycle. Something is polling the wrong command."
+                      % self._deep_run, file=sys.stderr)
+        elif cmd == CMD_SCREEN:
+            self._deep_run = 0
         self.sp.write(build_command(cmd, param))
 
     def drain(self):
