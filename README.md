@@ -312,22 +312,36 @@ Read these before planning anything around this instrument.
   stops talking, and `Scope` is a context manager so even a crash cannot leave
   it held.
 
-* **Sometimes the lock does not clear at all.** The front panel stays
-  completely dead while the serial side goes on answering normally. **No serial
-  command recovers this**, `unfreeze` included. It needs physical intervention:
+* **The firmware can hang, and it gets hot.** The front panel goes completely
+  dead, the instrument becomes noticeably warm, and the serial side carries on
+  answering normally the whole time. The warmth is the tell: it is not a
+  protocol state you can command your way out of, it is the firmware spinning.
+  The serial interface keeps replying because that runs from an interrupt
+  while the main loop is starved.
 
-  > **unplug the USB cable, power the instrument off, power it on, then plug
-  > USB back in — in that order.**
+  > **Unplug the USB cable promptly** — it is what is keeping the instrument
+  > powered and heating. Then power off, power on, and reconnect USB.
 
-  A power cycle *alone is not enough*: USB keeps the instrument alive and it
-  comes back still locked. The front-panel settings return to defaults
-  afterwards, so re-set volts/div, timebase and trigger mode. Nothing is lost
-  from the tool's point of view — it reads all settings from the instrument
-  rather than configuring it.
+  Pressing the power button *alone does nothing*: the instrument is
+  bus-powered, so with USB connected it never actually loses power and comes
+  back still hung. Front-panel settings return to defaults after a genuine
+  cold boot, so re-set volts/div, timebase and trigger mode.
 
-  It is provoked by long runs of command 4 (the deep record) with no command 3
-  in between, so nothing in the tool polls that way, and it warns if anything
-  issues 20 deep-record requests in a row.
+  No serial command recovers this state — `unfreeze` included; it is worth one
+  try for the milder lock above, but do not keep poking a hot instrument.
+
+  The likely trigger is the serial control lines rather than anything sent
+  over them. pyserial asserts DTR and RTS when it opens a port; the vendor
+  application never sets either, so .NET's defaults leave both low. A USB-CDC
+  device whose firmware reacts to those lines can hang when they toggle — the
+  same mechanism that auto-resets an Arduino — and it fits the symptom of
+  hanging on exchanges as small as a ping. This tool now opens the port with
+  both lines low, matching the vendor application.
+
+  Long runs of deep-record (command 4) requests with no command 3 between them
+  are a separate hazard, so nothing here polls that way and the tool warns if
+  anything issues 20 in a row. If a hang would be costly, `--screen` uses only
+  command 3.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from

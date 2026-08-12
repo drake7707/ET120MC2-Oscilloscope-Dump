@@ -60,7 +60,30 @@ class Scope(object):
         serial = _import_serial()
         self.port_name = port
         try:
-            self.sp = serial.Serial(port, baud, timeout=0.05)
+            # Open without asserting DTR or RTS. pyserial raises both by
+            # default, and a USB-CDC device whose firmware reacts to those
+            # lines can reset or hang when they toggle -- the same mechanism
+            # that auto-resets an Arduino. This instrument has hung on
+            # exchanges as small as a ping plus two live-mode requests, which
+            # points at the act of opening the port rather than at anything
+            # sent over it. Setting the states before open() makes pyserial
+            # apply them as part of configuring the port, so the lines are
+            # never driven high.
+            self.sp = serial.Serial()
+            self.sp.port = port
+            self.sp.baudrate = baud
+            self.sp.timeout = 0.05
+            self.sp.dsrdtr = False
+            self.sp.rtscts = False
+            self.sp.xonxoff = False
+            self.sp.dtr = False
+            self.sp.rts = False
+            self.sp.open()
+            try:
+                self.sp.dtr = False
+                self.sp.rts = False
+            except Exception:
+                pass                      # not all drivers allow this
         except Exception as exc:
             hint = ("If the port is busy, close the vendor ScopeMeter application -- "
                     "it holds\nthe port exclusively.")
