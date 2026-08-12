@@ -1,0 +1,7 @@
+*.csv
+*.pwl
+*.raw
+__pycache__/
+.vs
+bin
+obj
