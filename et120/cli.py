@@ -57,16 +57,30 @@ def _wants(args):
             args.all or args.raw)
 
 
-def _emit(rec, stem, args, plot_title=None):
+def _emit(rec, stem, args):
+    """Report and write files. Plotting is deliberately NOT done here.
+
+    A bare --plot opens a blocking window, and anything done before that window
+    is closed keeps the serial port open behind it -- which locks out the
+    vendor application and anything else wanting the instrument. So callers
+    finish talking to the instrument, close the connection, and only then plot;
+    see _plot_all().
+    """
     describe(rec)
     if stem:
         want_pwl, want_csv, want_raw = _wants(args)
         export(rec, stem, want_pwl, want_csv, want_raw,
                channel=args.channel, repeat=args.repeat,
                remove_dc=args.remove_dc, version=__version__)
-    if args.plot:
+
+
+def _plot_all(pending, args):
+    """Plot records once the instrument has been released. pending: [(rec, title)]."""
+    if not args.plot:
+        return
+    for rec, title in pending:
         plot_record(rec, None if args.plot == "-" else args.plot,
-                    channel=args.channel, remove_dc=args.remove_dc, title=plot_title)
+                    channel=args.channel, remove_dc=args.remove_dc, title=title)
 
 
 # -- commands ---------------------------------------------------------------
@@ -88,8 +102,8 @@ def cmd_info(args):
         print("connected on %s" % scope.port_name)
         rec = _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
         describe(rec)
-        if args.plot:
-            plot_record(rec, None if args.plot == "-" else args.plot)
+    if args.plot:                       # only after the port is closed
+        plot_record(rec, None if args.plot == "-" else args.plot)
     return 0
 
 
@@ -120,17 +134,20 @@ def _acquire_best(scope, args, n):
 def cmd_capture(args):
     scope = _connect(args)
     stem = os.path.splitext(args.output)[0] if args.output else "capture"
+    pending = []
     with scope:
         for i in range(args.count):
             label = stem if args.count == 1 else "%s_%02d" % (stem, i)
             print("capture %d/%d ..." % (i + 1, args.count))
             rec = _acquire_best(scope, args, args.best_of)
             _emit(rec, label, args)
+            pending.append((rec, None))
             if args.dump:
                 with open("%s.bin" % label, "wb") as fh:
                     fh.write(scope.log)
                 print("  wrote %s.bin (raw serial log)" % label)
                 scope.log = bytearray()
+    _plot_all(pending, args)
     if args.count > 1:
         print("\nNote: these records are NOT contiguous in time -- the instrument "
               "re-triggers\n      between captures. Do not concatenate them into one "
@@ -165,8 +182,8 @@ def cmd_stored(args):
                      % args.slot)
         _prep(rec, args)
         print("slot %d:" % args.slot)
-        _emit(rec, os.path.splitext(args.output)[0] if args.output else None, args,
-              plot_title="ET120MC2 stored slot %d" % args.slot)
+        _emit(rec, os.path.splitext(args.output)[0] if args.output else None, args)
+    _plot_all([(rec, "ET120MC2 stored slot %d" % args.slot)], args)
     return 0
 
 
@@ -189,6 +206,7 @@ def cmd_decode(args):
     deep = [r for r in good if r.deep]
     chosen = _prep((deep or good)[0], args)
     _emit(chosen, os.path.splitext(args.output)[0] if args.output else None, args)
+    _plot_all([(chosen, None)], args)
     return 0
 
 
