@@ -195,8 +195,12 @@ def plot_record(rec, path=None, channel=None, remove_dc=False, title=None):
         ch = rec.channels[num]
         m = measure(v, rec.dt)
         ax.plot(ts, v, colour, lw=1.0,
-                label="CH%d  %.4g Vpp, %.4g Vrms, %.6g Hz"
-                      % (num, m["vpp"], m["vrms"], m["freq"]))
+                label=("CH%d    Vpp %.4g    max %.4g    min %.4g\n"
+                       "rms %.4g    avg %.4g    f %.6g Hz"
+                       % (num, m["vpp"], m["vmax"], m["vmin"],
+                          m["vrms"], m["vmean"], m["freq"])))
+        # the mean, so any DC offset is visible against the trace
+        ax.axhline(m["vmean"], color=colour, ls="-", lw=0.6, alpha=0.35)
         if rec.deep:
             # Mark the ADC's limits, shifted by whatever --remove-dc subtracted
             # so the headroom shown stays the real headroom.
@@ -216,7 +220,7 @@ def plot_record(rec, path=None, channel=None, remove_dc=False, title=None):
     ax.set_xlabel("time (%s)" % unit)
     ax.set_ylabel("volts")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=8)
+    ax.legend(loc="best", fontsize=8, framealpha=0.9, labelspacing=0.8)
     ax.margins(x=0)
     fig.tight_layout()
 

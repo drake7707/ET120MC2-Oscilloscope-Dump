@@ -107,18 +107,34 @@ def cmd_info(args):
     return 0
 
 
+def _one(scope, args):
+    """A single record: freshly acquired, the held one, or the next trigger."""
+    if getattr(args, "wait", None):
+        print("armed -- waiting up to %.0f s for the instrument to trigger "
+              "(cause the event now)..." % args.wait)
+        rec = scope.wait_for_trigger(deep=not args.screen, timeout=args.wait)
+        if rec is None:
+            sys.exit("nothing triggered within %.0f s. Check the instrument's trigger "
+                     "mode is Normal\nor Single and that the level is above the noise "
+                     "floor." % args.wait)
+        return _prep(rec, args)
+    if getattr(args, "hold", False):
+        return _prep(scope.fetch_held(deep=not args.screen), args)
+    return _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+
+
 def _acquire_best(scope, args, n):
     """Take n acquisitions and keep the one with the largest peak-to-peak.
 
     For one-shot events that cannot be timed by hand against a ~1.3 s capture
-    cycle. Recalling a waveform saved on the instrument is usually better --
-    see the 'stored' command.
+    cycle. Arming the instrument's own trigger and using --hold is better still
+    when the event can be made to trigger reliably.
     """
     if n <= 1:
-        return _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+        return _one(scope, args)
     best, best_vpp, seen = None, -1.0, set()
     for k in range(n):
-        rec = _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+        rec = _one(scope, args)
         vpp = max(ch.span_volts() for ch in rec.channels.values())
         seen.add(next(iter(rec.channels.values())).raw.tobytes())
         print("    candidate %d/%d: Vpp %.4g V" % (k + 1, n, vpp))
@@ -132,6 +148,10 @@ def _acquire_best(scope, args, n):
 
 
 def cmd_capture(args):
+    if args.hold and args.best_of > 1:
+        sys.exit("--best-of makes no sense with --hold: the instrument replays the "
+                 "same held\nbuffer every time, so every candidate would be "
+                 "identical. Use one or the other.")
     scope = _connect(args)
     stem = os.path.splitext(args.output)[0] if args.output else "capture"
     pending = []
@@ -240,11 +260,21 @@ def cmd_limits(args):
 
 def _add_acq_opts(p):
     g = p.add_argument_group("acquisition")
+    g.add_argument("--hold", action="store_true",
+                   help="read the buffer the instrument is already holding instead "
+                        "of re-arming. Set the instrument's trigger to Normal, cause "
+                        "the event, then collect it -- the way to catch a one-shot "
+                        "event you cannot time by hand")
+    g.add_argument("--wait", nargs="?", type=float, const=60.0, metavar="SEC",
+                   help="wait for the instrument to trigger, then capture what it "
+                        "caught (default 60 s). Implies --hold; run this, then cause "
+                        "the event")
     g.add_argument("--screen", action="store_true",
                    help="use the 600-point screen record instead of the "
                         "2048-point deep record")
     g.add_argument("--settle", type=float, default=0.25, metavar="SEC",
-                   help="how long to let the deep buffer fill after re-arming")
+                   help="how long to let the deep buffer fill after re-arming "
+                        "(ignored with --hold and --wait)")
 
 
 def _add_signal_opts(p):

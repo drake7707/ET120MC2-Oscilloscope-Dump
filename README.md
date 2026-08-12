@@ -43,24 +43,43 @@ override with `-p COM7` or `-p /dev/ttyACM0` if you have more than one, and
 ### Capturing a one-shot event
 
 You cannot time a one-shot event — a switching transient, a fault, a single
-mechanical impulse — against a capture cycle that takes ~1.3 s. Two ways round
-it:
+mechanical impulse — against a capture cycle that takes ~1.3 s. Left to itself
+the tool re-arms the instrument before every capture, so it would almost always
+catch the quiet bit.
 
-* **Save it on the instrument, retrieve it afterwards.** Trigger and save the
-  event by hand, then pull it over serial whenever you like:
+**Use the instrument's own trigger.** Set it to Single or Normal, with the
+level above the noise floor, and let the hardware catch the event:
 
-  ```
-  python scope_et120.py stored              # see what is saved
-  python scope_et120.py stored 4 -o event --all --plot
-  ```
+```
+python scope_et120.py capture --wait -o event --all --plot event.png
+```
 
-  This is usually the better answer. The cost is that saved waveforms are
-  screen records rather than deep records — 300 columns of min/max, clipped to
-  the display — so they carry less information than a live capture.
+`--wait` polls until the held buffer changes — which means a new trigger fired
+— and captures what the instrument caught. Start the command, then cause the
+event. It waits 60 s by default, `--wait 300` for longer.
 
-* **`capture --best-of N`**, which takes N acquisitions and keeps the one with
-  the largest peak-to-peak, and tells you if the instrument never re-triggered.
-  Useful when the event repeats and you can keep provoking it.
+If the instrument has *already* triggered and is holding, just collect it:
+
+```
+python scope_et120.py capture --hold -o event --all
+```
+
+`--hold` reads the buffer as-is instead of re-arming, so the triggered
+acquisition is not thrown away. Do not change volts/div between triggering and
+collecting — the scaling comes from the instrument's current settings, and the
+tool will warn you if the held samples look inconsistent with them.
+
+Two fallbacks:
+
+* **Save it on the instrument and retrieve it later** with `stored` (see
+  above). Useful when you want several events banked before going near a
+  computer. The cost is that saved waveforms are screen records rather than
+  deep records — 300 columns of min/max, clipped to the display — so they
+  carry less information.
+
+* **`capture --best-of N`** takes N acquisitions and keeps the largest
+  peak-to-peak, and warns if the instrument never re-triggered. Only worth it
+  when the event repeats and you can keep provoking it; the trigger is better.
 
 `info` output looks like this:
 

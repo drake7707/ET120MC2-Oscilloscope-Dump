@@ -7,7 +7,7 @@ works with COM ports on Windows and /dev/tty* on Linux and macOS.
 import sys
 import time
 
-from .decode import decode_packet, validate
+from .decode import amplitude_agreement, decode_packet, validate
 from .protocol import (
     CMD_DEEP, CMD_LOAD_STORED, CMD_PING, CMD_SCREEN,
     PKT_DEEP, PKT_HELLO, PKT_SCREEN, PKT_STORED,
@@ -169,6 +169,73 @@ class Scope(object):
                 print("    ... waiting for a complete acquisition (%s)" % last,
                       file=sys.stderr)
         raise RuntimeError("gave up after %d attempts: %s" % (tries, last))
+
+    def wait_for_trigger(self, deep=True, timeout=60.0, poll=0.2):
+        """Wait until the held buffer changes, i.e. a new trigger has fired.
+
+        The instrument gives no explicit "triggered" status, but a held buffer
+        is byte-identical on every read until it is replaced. So watching for
+        it to change detects a new acquisition, which -- with the trigger set
+        to Normal -- means the event happened.
+
+        Returns a Record, or None if nothing triggered within the timeout.
+        """
+        base = self.fetch_held(deep=deep, quiet=True)
+        base_raw = next(iter(base.channels.values())).raw.tobytes()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(poll)
+            try:
+                rec = self.fetch_held(deep=deep, quiet=True)
+            except RuntimeError:
+                continue
+            if next(iter(rec.channels.values())).raw.tobytes() != base_raw:
+                return rec
+        return None
+
+    def fetch_held(self, deep=True, tries=6, timeout=4.0, quiet=False):
+        """Read whatever is already in the acquisition buffer, without re-arming.
+
+        With the instrument's trigger set to Normal, a trigger event is captured
+        and then *held* -- repeated requests return the identical buffer until
+        it is re-armed. That is exactly what you want for a one-shot event you
+        cannot time by hand: arm the trigger, cause the event, then collect it
+        whenever you get round to it.
+
+        acquire() deliberately re-arms first, which would discard the very
+        event you were waiting for, so this is a separate path. Packets are
+        still validated, to reject a buffer that was never filled.
+        """
+        want = PKT_DEEP if deep else PKT_SCREEN
+        cmd = CMD_DEEP if deep else CMD_SCREEN
+        last = "no packet received"
+        for _ in range(tries):
+            self.drain()
+            self.send(cmd)
+            pkt = self.read_packet(want, timeout)
+            if pkt is None:
+                last = "no packet received"
+                continue
+            rec = decode_packet(pkt)
+            if rec is None:
+                last = "packet did not decode"
+                continue
+            # Structural checks only: the reported measurements describe what
+            # the instrument sees now, not the held samples, so they are
+            # expected to disagree. Flag a large gap rather than reject it --
+            # it also means the volts/div may have moved since the trigger.
+            ok, why = validate(rec, tol=None)
+            if ok:
+                worst = amplitude_agreement(rec)
+                if not quiet and worst is not None and worst > 0.20:
+                    print("note: the held samples disagree with the instrument's "
+                          "current readings by %.0f%%.\n      That is normal for a "
+                          "held buffer, but the scaling comes from those readings --\n"
+                          "      so do not change volts/div between triggering and "
+                          "collecting." % (worst * 100), file=sys.stderr)
+                return rec
+            last = why
+        raise RuntimeError("could not read the held buffer: %s" % last)
 
     def fetch_stored(self, slot, timeout=4.0):
         """Recall a waveform saved on the instrument. Returns a Record or None."""

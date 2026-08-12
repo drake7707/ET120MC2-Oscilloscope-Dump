@@ -166,6 +166,11 @@ def validate(rec, tol=0.20):
     partly-filled deep buffer. Cross-checking the decoded peak-to-peak against
     the instrument's own Vpp readout -- which it computes from full-resolution
     data -- catches those, and doubles as a check that our scaling is right.
+
+    Pass tol=None to run the structural checks only. That is needed when
+    reading a *held* buffer, where the samples come from an earlier triggered
+    acquisition while the reported measurements describe what the instrument
+    is seeing now -- a disagreement there is expected, not a fault.
     """
     for num, ch in rec.channels.items():
         raw = ch.raw
@@ -174,6 +179,8 @@ def validate(rec, tol=0.20):
             return False, "ch%d: buffer tail is all zeros (acquisition incomplete)" % num
         if raw.max() == raw.min():
             return False, "ch%d: flat buffer" % num
+        if tol is None:
+            continue
         got, want = ch.span_volts(), ch.rep_vpp
         if want > 1e-9:
             err = abs(got - want) / want
@@ -181,6 +188,16 @@ def validate(rec, tol=0.20):
                 return False, ("ch%d: decoded Vpp %.4g V vs scope's %.4g V (%.0f%% off)"
                                % (num, got, want, err * 100))
     return True, "ok"
+
+
+def amplitude_agreement(rec):
+    """Largest relative disagreement between decoded and reported Vpp, or None."""
+    worst = None
+    for ch in rec.channels.values():
+        if ch.rep_vpp > 1e-9:
+            err = abs(ch.span_volts() - ch.rep_vpp) / ch.rep_vpp
+            worst = err if worst is None else max(worst, err)
+    return worst
 
 
 def measure(volts, dt):
