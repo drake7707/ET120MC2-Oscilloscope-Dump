@@ -608,7 +608,7 @@ def write_ltspice_raw(path, t, channels, title="ET120MC2 capture"):
 
 
 def export(rec, stem, want_pwl=True, want_csv=False, want_raw=False,
-           channel=None, repeat=1, quiet=False):
+           channel=None, repeat=1, quiet=False, remove_dc=False):
     t = np.arange(rec.npoints, dtype=np.float64) * rec.dt
 
     nums = sorted(rec.channels)
@@ -618,7 +618,15 @@ def export(rec, stem, want_pwl=True, want_csv=False, want_raw=False,
                              % (channel, ", ".join("CH%d" % c for c in nums)))
         nums = [channel]
 
-    named = [("ch%d" % n, rec.channels[n].volts()) for n in nums]
+    named = []
+    for n in nums:
+        v = rec.channels[n].volts()
+        if remove_dc:
+            offset = v.mean()
+            v = v - offset
+            if not quiet:
+                print("  ch%d: removed %.4g V DC offset" % (n, offset))
+        named.append(("ch%d" % n, v))
     written = []
     if want_pwl:
         for name, v in named:
@@ -686,6 +694,29 @@ def cmd_info(args):
     return 0
 
 
+def _acquire_best(scope, args, n):
+    """Take n acquisitions and keep the one with the largest peak-to-peak.
+
+    Useful for transients you cannot time by hand -- an instrument pluck, a
+    switching event -- where most snapshots catch silence.
+    """
+    if n <= 1:
+        return _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+    best, seen = None, set()
+    for k in range(n):
+        rec = _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+        vpp = max(ch.span_volts() for ch in rec.channels.values())
+        seen.add(next(iter(rec.channels.values())).raw.tobytes())
+        print("    candidate %d/%d: Vpp %.4g V" % (k + 1, n, vpp))
+        if best is None or vpp > max(c.span_volts() for c in best.channels.values()):
+            best = rec
+    if len(seen) == 1:
+        print("    WARNING: all %d candidates were identical. The scope is probably\n"
+              "             not re-triggering -- check the trigger mode and level."
+              % n, file=sys.stderr)
+    return best
+
+
 def cmd_capture(args):
     scope = _connect(args)
     stem = os.path.splitext(args.output)[0] if args.output else "capture"
@@ -694,10 +725,10 @@ def cmd_capture(args):
         for i in range(args.count):
             label = stem if args.count == 1 else "%s_%02d" % (stem, i)
             print("capture %d/%d ..." % (i + 1, args.count))
-            rec = _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
+            rec = _acquire_best(scope, args, args.best_of)
             describe(rec)
             export(rec, label, want_pwl, args.all or args.csv, args.all or args.raw,
-                   channel=args.channel, repeat=args.repeat)
+                   channel=args.channel, repeat=args.repeat, remove_dc=args.remove_dc)
             if args.dump:
                 with open("%s.bin" % label, "wb") as fh:
                     fh.write(scope.log)
@@ -733,7 +764,7 @@ def cmd_decode(args):
         want_pwl = args.all or args.pwl or not (args.csv or args.raw)
         export(chosen, os.path.splitext(args.output)[0], want_pwl,
                args.all or args.csv, args.all or args.raw,
-               channel=args.channel, repeat=args.repeat)
+               channel=args.channel, repeat=args.repeat, remove_dc=args.remove_dc)
     return 0
 
 
@@ -794,6 +825,8 @@ def main(argv=None):
                        help="export only this channel")
         p.add_argument("--repeat", type=int, default=1, metavar="N",
                        help="tile the PWL N times for a longer transient run")
+        p.add_argument("--remove-dc", action="store_true",
+                       help="subtract the mean, so the waveform is centred on 0 V")
         p.add_argument("--keep-zoh", action="store_true",
                        help="keep the scope's 5x sample padding instead of collapsing it")
 
@@ -807,6 +840,10 @@ def main(argv=None):
 
     p = sub.add_parser("capture", help="capture waveform(s) and export")
     p.add_argument("-n", "--count", type=int, default=1, help="number of records")
+    p.add_argument("--best-of", type=int, default=1, metavar="N",
+                   help="take N acquisitions per record and keep the one with the "
+                        "largest peak-to-peak (for catching plucks and other "
+                        "transients you cannot time by hand)")
     p.add_argument("--dump", action="store_true", help="also save the raw serial log")
     add_acq_opts(p)
     add_export_opts(p)

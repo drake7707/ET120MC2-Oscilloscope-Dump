@@ -72,6 +72,63 @@ the `.raw` for viewing.
 Output always uses `.` as the decimal separator regardless of your system
 locale.
 
+### Making a capture worth simulating
+
+A sine from a signal generator will make almost any circuit look fine. If you
+are simulating in order to reproduce a *problem*, the capture has to carry the
+properties that cause it — usually crest factor and low-frequency content, not
+bandwidth.
+
+1. **Set V/div for the peak, not the average.** Scale so the loudest transient
+   fills 6–8 divisions without touching the edge. With only 8 bits the quiet
+   parts will be coarse; accept that. A clipped capture is worthless, a noisy
+   tail is not.
+
+2. **Set the timebase for the event you care about.** Attack transients need
+   rate, sustained tone needs length — and you cannot have both, so take two
+   captures. See the table above.
+
+3. **Use Normal trigger, not Auto**, with the level just above the noise floor,
+   so the record holds the event rather than whatever was on screen when the
+   script asked.
+
+4. **Take several and keep the best**, since you cannot time a one-shot event
+   against a ~1.3 s capture cycle:
+
+   ```
+   python scope_et120.py capture -o pluck --best-of 10 --remove-dc --all
+   ```
+
+   `--best-of N` keeps the acquisition with the largest peak-to-peak and warns
+   if all N came back identical, which means the scope never re-triggered.
+   `--remove-dc` centres the result on 0 V, which is usually what you want
+   feeding an amplifier input.
+
+5. **Match the simulation's timestep to the capture.** The PWL header comment
+   gives `dt` and total length; run `.tran 0 <length> 0 <dt/2>` so LTspice
+   does not step over your samples.
+
+### Model the source, not just the signal
+
+A PWL source in LTspice has zero output impedance. It will drive anything.
+If the real source cannot, the simulation will not reproduce the real
+behaviour no matter how good the recording is.
+
+For a piezo pickup, model it as the recorded voltage in series with the
+element's own capacitance:
+
+```
+V1  src 0   PWL file=pluck.pwl
+C1  src in  2.2n          ; measured pickup capacitance
+Rlk in  0   1000Meg       ; leakage, optional
+```
+
+That series capacitance is the whole point: at 41 Hz, 2.2 nF is a source
+impedance of about 1.8 MΩ. An input stage that looks fine driven by an ideal
+source will lose most of the signal — and tilt the frequency response — when
+fed through that. Many handheld meters, including this one in DMM mode, will
+measure the pickup's capacitance for you.
+
 ## Limitations
 
 Read these before planning anything around this instrument.
