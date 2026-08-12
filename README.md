@@ -66,13 +66,10 @@ Do not change volts/div between triggering and collecting: the scaling comes
 from the instrument's current settings, and the tool will warn you if the held
 samples look inconsistent with them.
 
-> **Why there is no "wait for trigger" option.** It cannot be made to work
-> here. Detecting a trigger means polling, and both available commands are
-> destructive: polling the deep record (command 4) drives the instrument into
-> a lock that needs a USB disconnect and power cycle, while polling the screen
-> record (command 3) *re-arms* it — consuming the very Single-shot you are
-> waiting for, and leaving the deep buffer unwritten. Both were implemented
-> and both failed against hardware. Trigger by hand, then collect.
+There is deliberately no "wait for the trigger" option. Detecting a trigger
+would mean polling, and neither available command can be polled safely:
+command 4 locks the instrument (see Limitations) and command 3 re-arms it,
+consuming the Single-shot you are waiting for. Trigger by hand, then collect.
 
 Two fallbacks:
 
@@ -316,9 +313,8 @@ Read these before planning anything around this instrument.
   it held.
 
 * **Sometimes the lock does not clear at all.** The front panel stays
-  completely dead while the serial side goes on answering ping and command 3
-  normally. **No sequence of serial commands recovers this** — `unfreeze` has
-  been tried against it and does not work. It needs physical intervention:
+  completely dead while the serial side goes on answering normally. **No serial
+  command recovers this**, `unfreeze` included. It needs physical intervention:
 
   > **unplug the USB cable, power the instrument off, power it on, then plug
   > USB back in — in that order.**
@@ -329,11 +325,9 @@ Read these before planning anything around this instrument.
   from the tool's point of view — it reads all settings from the instrument
   rather than configuring it.
 
-  What provokes it is long runs of command 4 (the deep record) with no command
-  3 in between. A poll-for-trigger option did exactly that and reliably caused
-  it, which is why there is no such option any more. The tool now warns if
-  anything issues 20 deep-record requests in a row, so the pattern cannot come
-  back unnoticed.
+  It is provoked by long runs of command 4 (the deep record) with no command 3
+  in between, so nothing in the tool polls that way, and it warns if anything
+  issues 20 deep-record requests in a row.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from
