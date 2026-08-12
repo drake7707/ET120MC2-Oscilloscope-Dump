@@ -225,9 +225,20 @@ def plot_record(rec, path=None, channel=None, remove_dc=False, title=None):
     fig.tight_layout()
 
     if path:
-        fig.savefig(path, dpi=120)
+        try:
+            fig.savefig(path, dpi=120)
+            print("  wrote %s" % path)
+        except Exception as exc:
+            # Never let a plotting problem take down a run whose data files
+            # have already been written.
+            supported = ", ".join(sorted(fig.canvas.get_supported_filetypes()))
+            print("could not write %s: %s\n"
+                  "The capture itself was saved; only the plot failed. matplotlib "
+                  "picks the\nformat from the file extension -- supported: %s"
+                  % (path, exc, supported), file=sys.stderr)
+            plt.close(fig)
+            return False
         plt.close(fig)
-        print("  wrote %s" % path)
     else:
         try:
             plt.show()
