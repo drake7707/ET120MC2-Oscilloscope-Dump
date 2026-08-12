@@ -7,33 +7,7 @@ try:
 except ImportError:
     sys.exit("numpy is required:  python -m pip install numpy")
 
-from .decode import measure
-
-
-def detect_zoh(raw, max_factor=16, threshold=0.90):
-    """Find the repeat factor and phase of the instrument's sample padding.
-
-    The 2048-byte deep record is not 2048 measurements: the instrument acquires
-    about 410 real samples and repeats each one 5 times to fill the buffer.
-
-    Returns (factor, phase, confidence). factor == 1 means no padding found.
-    """
-    best = (1, 0, 0.0)
-    n = len(raw)
-    for f in range(2, max_factor + 1):
-        if n // f < 16:
-            break
-        for phase in range(f):
-            end = phase + (n - phase) // f * f
-            groups = raw[phase:end].reshape(-1, f)
-            const = np.count_nonzero(groups.max(axis=1) == groups.min(axis=1)) \
-                / float(groups.shape[0])
-            if const > best[2] + 1e-9:
-                best = (f, phase, const)
-    factor, phase, score = best
-    if score < threshold:
-        return 1, 0, score
-    return factor, phase, score
+from .decode import detect_zoh, measure
 
 
 def strip_zoh(rec):

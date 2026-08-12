@@ -55,6 +55,10 @@ SCREEN_MIN, SCREEN_MAX = 0, 200
 # division. Only every 5th is a real sample (see the zero-order-hold note in
 # process.py).
 DEEP_SAMPLES_PER_DIV = 125.0
+# Every real deep record repeats each acquired sample exactly 5 times -- checked
+# at all ten reachable timebases. A buffer caught mid-write shows a repeat
+# factor of 2 instead, which makes this a reliable completeness test.
+DEEP_ZOH_FACTOR = 5
 # 600 bytes = 300 screen columns of (min, max) over 10 divisions.
 SCREEN_COLUMNS_PER_DIV = 30.0
 

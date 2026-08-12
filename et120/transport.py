@@ -89,7 +89,7 @@ class Scope(object):
     # mode and resets the count. This is a tripwire, not a cure: it warns
     # rather than injecting a command 3, because that would re-arm the
     # acquisition and discard a held trigger, which is exactly what --hold
-    # and --wait exist to preserve.
+    # exists to preserve.
     DEEP_RUN_WARN = 20
 
     def send(self, cmd, param=0):
@@ -189,50 +189,6 @@ class Scope(object):
                 print("    ... waiting for a complete acquisition (%s)" % last,
                       file=sys.stderr)
         raise RuntimeError("gave up after %d attempts: %s" % (tries, last))
-
-    def wait_for_trigger(self, deep=True, timeout=60.0, poll=0.75):
-        """Wait until the held buffer changes, i.e. a new trigger has fired.
-
-        The instrument gives no explicit "triggered" status, but a held buffer
-        is byte-identical on every read until it is replaced. So watching for
-        it to change detects a new acquisition, which -- with the trigger set
-        to Single or Normal -- means the event happened.
-
-        Polling is done with the *screen* record (command 3), not the deep one.
-        Command 4 is what puts the instrument into its held remote state, and
-        issuing a long run of them back to back drives it into a lock that a
-        power cycle alone will not clear. Command 3 is the live-mode request,
-        it is a third of the size, and the display changes when a trigger
-        fires just as the deep buffer does -- so it detects the event just as
-        well without the damage. The deep record is then fetched exactly once.
-
-        Returns a Record, or None if nothing triggered within the timeout.
-        """
-        def screen_signature():
-            self.drain()
-            self.send(CMD_SCREEN)
-            pkt = self.read_packet(PKT_SCREEN, 2.5)
-            if pkt is None or len(pkt) < SCREEN_PACKET_LEN:
-                return None
-            return bytes(pkt[2:1202])           # both channels' sample blocks
-
-        base = screen_signature()
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            time.sleep(poll)
-            sig = screen_signature()
-            if sig is None:
-                continue
-            if base is None:
-                base = sig
-                continue
-            if sig != base:
-                # Something triggered. Collect the deep record for the real
-                # data -- once, not in a loop.
-                if not deep:
-                    return self.fetch_held(deep=False, quiet=True)
-                return self.fetch_held(deep=True, quiet=True)
-        return None
 
     def fetch_held(self, deep=True, tries=6, timeout=4.0, quiet=False):
         """Read whatever is already in the acquisition buffer, without re-arming.

@@ -108,16 +108,7 @@ def cmd_info(args):
 
 
 def _one(scope, args):
-    """A single record: freshly acquired, the held one, or the next trigger."""
-    if getattr(args, "wait", None):
-        print("armed -- waiting up to %.0f s for the instrument to trigger "
-              "(cause the event now)..." % args.wait)
-        rec = scope.wait_for_trigger(deep=not args.screen, timeout=args.wait)
-        if rec is None:
-            sys.exit("nothing triggered within %.0f s. Check the instrument's trigger "
-                     "mode is Normal\nor Single and that the level is above the noise "
-                     "floor." % args.wait)
-        return _prep(rec, args)
+    """A single record: freshly acquired, or the one the instrument is holding."""
     if getattr(args, "hold", False):
         return _prep(scope.fetch_held(deep=not args.screen), args)
     return _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
@@ -126,9 +117,9 @@ def _one(scope, args):
 def _acquire_best(scope, args, n):
     """Take n acquisitions and keep the one with the largest peak-to-peak.
 
-    For one-shot events that cannot be timed by hand against a ~1.3 s capture
-    cycle. Arming the instrument's own trigger and using --hold is better still
-    when the event can be made to trigger reliably.
+    For repeatable events. For a genuine one-shot, arm the instrument's own
+    trigger and use --hold instead -- that catches the event itself rather
+    than hoping a snapshot lands on it.
     """
     if n <= 1:
         return _one(scope, args)
@@ -302,16 +293,12 @@ def _add_acq_opts(p):
                         "of re-arming. Set the instrument's trigger to Normal, cause "
                         "the event, then collect it -- the way to catch a one-shot "
                         "event you cannot time by hand")
-    g.add_argument("--wait", nargs="?", type=float, const=60.0, metavar="SEC",
-                   help="wait for the instrument to trigger, then capture what it "
-                        "caught (default 60 s). Implies --hold; run this, then cause "
-                        "the event")
     g.add_argument("--screen", action="store_true",
                    help="use the 600-point screen record instead of the "
                         "2048-point deep record")
     g.add_argument("--settle", type=float, default=0.25, metavar="SEC",
                    help="how long to let the deep buffer fill after re-arming "
-                        "(ignored with --hold and --wait)")
+                        "(ignored with --hold)")
 
 
 def _add_signal_opts(p):

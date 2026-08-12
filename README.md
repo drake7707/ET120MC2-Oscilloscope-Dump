@@ -48,27 +48,31 @@ mechanical impulse — against a capture cycle that takes ~1.3 s. Left to itself
 the tool re-arms the instrument before every capture, so it would almost always
 catch the quiet bit.
 
-**Use the instrument's own trigger.** Set it to Single or Normal, with the
-level above the noise floor, and let the hardware catch the event:
+**Use the instrument's own trigger, and collect afterwards.** In this order:
 
-```
-python scope_et120.py capture --wait -o event --all --plot event.png
-```
+1. Set the trigger to **Single** (or Normal), level just above the noise floor.
+2. Cause the event. The instrument captures it and holds it.
+3. Collect it:
 
-`--wait` polls until the held buffer changes — which means a new trigger fired
-— and captures what the instrument caught. Start the command, then cause the
-event. It waits 60 s by default, `--wait 300` for longer.
+   ```
+   python scope_et120.py capture --hold -o event --all --plot event.png
+   ```
 
-If the instrument has *already* triggered and is holding, just collect it:
+`--hold` reads the held buffer as-is instead of re-arming, so the triggered
+acquisition is not thrown away. It is a single request — no polling — which is
+also the pattern least likely to upset the instrument.
 
-```
-python scope_et120.py capture --hold -o event --all
-```
+Do not change volts/div between triggering and collecting: the scaling comes
+from the instrument's current settings, and the tool will warn you if the held
+samples look inconsistent with them.
 
-`--hold` reads the buffer as-is instead of re-arming, so the triggered
-acquisition is not thrown away. Do not change volts/div between triggering and
-collecting — the scaling comes from the instrument's current settings, and the
-tool will warn you if the held samples look inconsistent with them.
+> **Why there is no "wait for trigger" option.** It cannot be made to work
+> here. Detecting a trigger means polling, and both available commands are
+> destructive: polling the deep record (command 4) drives the instrument into
+> a lock that needs a USB disconnect and power cycle, while polling the screen
+> record (command 3) *re-arms* it — consuming the very Single-shot you are
+> waiting for, and leaving the deep buffer unwritten. Both were implemented
+> and both failed against hardware. Trigger by hand, then collect.
 
 Two fallbacks:
 
@@ -326,11 +330,10 @@ Read these before planning anything around this instrument.
   rather than configuring it.
 
   What provokes it is long runs of command 4 (the deep record) with no command
-  3 in between. `--wait` originally polled that way and reliably caused it; it
-  now polls with the screen record and fetches the deep record once, which
-  should avoid it. **The safest route to a triggered capture is still `--hold`**:
-  arm Single on the instrument, cause the event, then collect it with a single
-  request.
+  3 in between. A poll-for-trigger option did exactly that and reliably caused
+  it, which is why there is no such option any more. The tool now warns if
+  anything issues 20 deep-record requests in a row, so the pattern cannot come
+  back unnoticed.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from

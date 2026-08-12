@@ -9,7 +9,7 @@ except ImportError:
     sys.exit("numpy is required:  python -m pip install numpy")
 
 from .protocol import (
-    DEEP_COUNTS_PER_DIV, DEEP_SAMPLES_PER_DIV, DEEP_ZERO_CODE,
+    DEEP_COUNTS_PER_DIV, DEEP_SAMPLES_PER_DIV, DEEP_ZERO_CODE, DEEP_ZOH_FACTOR,
     PKT_DEEP, PKT_SCREEN, PKT_STORED,
     SCREEN_COLUMNS_PER_DIV, SCREEN_COUNTS_PER_DIV, SCREEN_MAX, SCREEN_MIN,
     SECS_PER_DIV, VOLTS_PER_DIV,
@@ -159,6 +159,33 @@ def decode_packet(pkt):
     return rec
 
 
+def detect_zoh(raw, max_factor=16, threshold=0.90):
+    """Find the repeat factor and phase of the instrument's sample padding.
+
+    The 2048-byte deep record is not 2048 measurements: the instrument acquires
+    about 410 real samples and repeats each one DEEP_ZOH_FACTOR times to fill
+    the buffer.
+
+    Returns (factor, phase, confidence). factor == 1 means no padding found.
+    """
+    best = (1, 0, 0.0)
+    n = len(raw)
+    for f in range(2, max_factor + 1):
+        if n // f < 16:
+            break
+        for phase in range(f):
+            end = phase + (n - phase) // f * f
+            groups = raw[phase:end].reshape(-1, f)
+            const = np.count_nonzero(groups.max(axis=1) == groups.min(axis=1)) \
+                / float(groups.shape[0])
+            if const > best[2] + 1e-9:
+                best = (f, phase, const)
+    factor, phase, score = best
+    if score < threshold:
+        return 1, 0, score
+    return factor, phase, score
+
+
 def validate(rec, tol=0.20):
     """Reject stale or half-filled buffers. Returns (ok, reason).
 
@@ -179,6 +206,18 @@ def validate(rec, tol=0.20):
             return False, "ch%d: buffer tail is all zeros (acquisition incomplete)" % num
         if raw.max() == raw.min():
             return False, "ch%d: flat buffer" % num
+        # A complete deep record repeats every acquired sample DEEP_ZOH_FACTOR
+        # times. One caught mid-write comes back with a factor of 2 and a
+        # waveform that jumps to the rails partway through, so this catches a
+        # partly-written buffer even when its tail is not zeros -- and unlike
+        # the peak-to-peak cross-check below, it stays valid for held buffers,
+        # where the reported measurements legitimately describe something else.
+        if rec.deep and rec.zoh <= 1:
+            factor, _, conf = detect_zoh(raw)
+            if factor < 3:
+                return False, ("ch%d: sample padding is %dx, not %dx -- the buffer "
+                               "was only partly written"
+                               % (num, factor, DEEP_ZOH_FACTOR))
         if tol is None:
             continue
         got, want = ch.span_volts(), ch.rep_vpp
