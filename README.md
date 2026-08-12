@@ -1,4 +1,6 @@
-# scope_et120
+# ET120MC2 Oscilloscope dump
+
+<img width="770" height="970" alt="PXL_20260811_054342258_preview" src="https://github.com/user-attachments/assets/38ccbe2f-b096-47f3-976e-949aa683f166" />
 
 Dump raw waveform data from an **ET120MC2 / ET120** handheld oscilloscope over
 its USB serial port, and export it in formats LTspice can use.
