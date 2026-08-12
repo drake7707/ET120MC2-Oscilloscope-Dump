@@ -1,7 +1,17 @@
+# capture output
 *.csv
 *.pwl
 *.raw
+*.png
+*.bin
+
+# python
 __pycache__/
-.vs
-bin
-obj
+*.py[cod]
+
+# .NET build output from ScopeMeterDecompiled/
+[Bb]in/
+[Oo]bj/
+.vs/
+*.suo
+*.user

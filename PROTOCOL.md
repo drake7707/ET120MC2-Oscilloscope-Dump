@@ -1,7 +1,8 @@
 # ET120MC2 serial protocol
 
-Reverse engineered from the bundled ScopeMeter application source
-(`ScopeMeter/Form1ShiBoQi.cs`) and verified against live hardware on COM5.
+Reverse engineered from the decompiled vendor application
+(`ScopeMeterDecompiled/ScopeMeter/Form1ShiBoQi.cs`) and verified against live
+hardware.
 
 ## Link
 
@@ -91,6 +92,33 @@ matches the vendor code's `tempPackage` layout.
 
 4-byte short frame. `PARAM` is `0` when the instrument is in scope (DSO) mode,
 non-zero when it is in multimeter (DMM) mode.
+
+### `0x22` — stored waveform, 1362 bytes total
+
+Returned in response to command 2 with the slot number in `PARAM`. It is a
+screen record behind a four-byte prefix:
+
+| Offset | Size | Meaning |
+|---:|---:|---|
+| 0 | 1 | `0x22` |
+| 1 | 1 | slot number, echoed back |
+| 2 | 2 | `00 06`, constant in every capture seen |
+| 4 | 1358 | a `0x23` screen record, laid out exactly as below |
+
+The vendor application drops the first four bytes and parses the remainder as
+a `0x23`, which is what `et120` does.
+
+**The instrument must be live for this to work.** Sending command 2 while it
+is not simply wedges the serial interface for a while — no reply, and
+subsequent requests go unanswered until it recovers on its own. It is not
+enough to send command 3 first; you have to actually see the `0x23` reply come
+back before issuing the recall. `Scope.fetch_stored()` does that.
+
+Recalling a saved waveform is the practical way to capture a one-shot event:
+trigger and save it on the instrument by hand, then retrieve it over serial at
+leisure. The cost is that stored waveforms are screen records, not deep
+records — 300 columns of min/max, clipped to the display and offset by the
+vertical position control — so they carry less information than a live `0x24`.
 
 ### `0x23` — live screen record, 1358 bytes total
 
@@ -243,9 +271,22 @@ So a fresh deep capture is:
 cmd 3  ->  read/discard the 0x23 reply  ->  short settle  ->  cmd 4  ->  validate  ->  retry if bad
 ```
 
-`scope_et120.py` implements exactly this, validating each packet against the
+`et120` implements exactly this, validating each packet against the
 instrument's own Vpp readout, and sends a final cmd 3 on exit so the scope is
 left usable.
+
+### The front panel while the host is talking
+
+The instrument's front panel stops responding for as long as the host keeps
+issuing commands, and comes back by itself a moment after the traffic stops.
+This is not a latch that has to be cleared — polling it in a loop to "make
+sure" it is released is actively counterproductive, because every extra
+command re-freezes the panel and the last one leaves it freshly frozen.
+
+So the correct release is: leave the instrument in live mode rather than
+holding a deep record or a recalled waveform, read the reply so nothing is
+half-sent, and then stop talking to it. `Scope` does this from `release()`, and
+is a context manager so a crash cannot leave the instrument held.
 
 ## Notes on the vendor application
 

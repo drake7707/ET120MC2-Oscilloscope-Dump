@@ -25,16 +25,42 @@ python -m pip install pyserial numpy
 
 ```
 python scope_et120.py ports                    # find the scope
-python scope_et120.py info                     # connect, report one acquisition
+python scope_et120.py info --plot              # connect, report and plot one acquisition
 python scope_et120.py capture -o signal        # -> signal.pwl  (for LTspice)
 python scope_et120.py capture -o signal --all  # -> .pwl + .csv + .raw
 python scope_et120.py capture -n 10 -o run     # 10 separate records
+python scope_et120.py stored                   # what is saved on the instrument
+python scope_et120.py stored 4 -o saved --all  # fetch slot 4
 python scope_et120.py limits                   # what the hardware can/cannot do
 python scope_et120.py sniff -o dump.bin        # log raw serial traffic
 python scope_et120.py decode dump.bin -o sig   # decode a dump offline
 ```
 
-Default port is `COM5`; override with `-p COM7` / `-p /dev/ttyACM0`.
+`python -m et120` works too. The port is found automatically by USB vendor ID;
+override with `-p COM7` or `-p /dev/ttyACM0` if you have more than one, and
+`ports` lists what is attached.
+
+### Capturing a one-shot event
+
+You cannot time a one-shot event — a switching transient, a fault, a single
+mechanical impulse — against a capture cycle that takes ~1.3 s. Two ways round
+it:
+
+* **Save it on the instrument, retrieve it afterwards.** Trigger and save the
+  event by hand, then pull it over serial whenever you like:
+
+  ```
+  python scope_et120.py stored              # see what is saved
+  python scope_et120.py stored 4 -o event --all --plot
+  ```
+
+  This is usually the better answer. The cost is that saved waveforms are
+  screen records rather than deep records — 300 columns of min/max, clipped to
+  the display — so they carry less information than a live capture.
+
+* **`capture --best-of N`**, which takes N acquisitions and keeps the one with
+  the largest peak-to-peak, and tells you if the instrument never re-triggered.
+  Useful when the event repeats and you can keep provoking it.
 
 `info` output looks like this:
 
@@ -140,6 +166,78 @@ show it. This matters most for high-impedance sources — sensor elements,
 high-value dividers, anything capacitive — where the source impedance can be
 comparable to or larger than the input impedance it is feeding.
 
+## Worked examples
+
+### Drive an LTspice circuit with a real signal
+
+Probe the signal, set the V/div so it fills most of the screen, then:
+
+```
+python scope_et120.py capture -o input --remove-dc --plot input.png
+```
+
+Check `input.png` looks like the signal you meant to capture and that the
+report says a decent fraction of the ADC range is in use. Then in LTspice, add
+a voltage source with value `PWL file=C:\path\to\input.pwl` and run a `.tran`
+at least as long as the record. The `.pwl` header comment tells you its length
+and timestep.
+
+### Capture something you cannot time by hand
+
+Trigger and save the event on the instrument itself, then collect it later:
+
+```
+python scope_et120.py stored                          # 5 saved waveform(s) found.
+python scope_et120.py stored 4 -o event --all --plot
+```
+
+### Make a long stimulus out of one short record
+
+One record is at most 819 ms and usually far less. For a steady signal, trim
+it to whole cycles and tile it:
+
+```
+python scope_et120.py capture -o tone --loop --repeat 50 --remove-dc
+```
+
+`--loop` reports what it did: `trimmed to 8 cycle(s), 400 points, 0.08 s; wrap
+step 0.196 V (1.0x the local sample step)`. A ratio near 1 means the seam is
+indistinguishable from an ordinary sample. Without `--loop` the tiling steps
+at every wrap, which the simulated circuit will respond to.
+
+### Compare a circuit's input and output
+
+Probe both channels, then export each separately:
+
+```
+python scope_et120.py capture -o both --all          # both channels
+python scope_et120.py capture -o in  -c 1            # CH1 only
+```
+
+The `.raw` file carries both channels and opens directly in the LTspice
+waveform viewer, so you can put the measurement next to the simulation.
+
+### Is my capture any good?
+
+```
+python scope_et120.py info --plot
+```
+
+The report prints the tool's own measurements next to the instrument's for the
+same acquisition. If they disagree, something is wrong — that check is also
+applied automatically and captures failing it by more than 20 % are rejected.
+It also flags aliasing, clipping, and using too little of the ADC range.
+
+### Work on a capture later, or on another machine
+
+```
+python scope_et120.py capture -o run --dump      # also writes run.bin
+python scope_et120.py decode run.bin -o run --all --plot run.png
+```
+
+`decode` needs no hardware, so raw dumps can be archived or sent to someone
+else and re-analysed with different options.
+
 ## Limitations
 
 Read these before planning anything around this instrument.
@@ -179,10 +277,19 @@ Read these before planning anything around this instrument.
   concatenated into one signal. `capture -n` writes them as separate files for
   that reason.
 
-* **Requesting the deep record freezes the scope's front panel.** That is the
-  instrument's behaviour, not a bug in this script; the vendor application does
-  it too. Sending it back to live mode unfreezes it, which this script does
-  automatically on exit and between captures.
+* **Nothing can be configured over serial.** Volts/div, timebase, trigger and
+  coupling are front-panel only — there is no command for any of them, and the
+  vendor application has no controls for them either. The tool reads whatever
+  the instrument is set to and adapts. See PROTOCOL.md for how that was
+  established.
+
+* **The front panel goes unresponsive while the host is talking to it**, and
+  comes back by itself a moment after the traffic stops. That is the
+  instrument's behaviour, not a bug in this tool; the vendor application does
+  it too. Polling it to "make sure" it is released makes things worse, since
+  every extra command re-freezes it. The tool leaves it in live mode and then
+  stops talking, and `Scope` is a context manager so even a crash cannot leave
+  it held.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from
@@ -255,10 +362,34 @@ you want the original UI back.
 
 | | |
 |---|---|
-| `scope_et120.py` | the tool |
+| `scope_et120.py` | launcher — equivalent to `python -m et120` |
+| `et120/protocol.py` | wire format: constants, framing, lookup tables |
+| `et120/decode.py` | packets to calibrated volts; validation |
+| `et120/process.py` | zero-order-hold removal, loop alignment |
+| `et120/transport.py` | serial port discovery and the `Scope` connection |
+| `et120/export.py` | reporting, plotting, PWL/CSV/raw writers |
+| `et120/cli.py` | command line |
 | `PROTOCOL.md` | wire protocol, packet layouts, scaling constants |
 | `ScopeMeterDecompiled/` | decompiled vendor sources, kill switch and locale bugs fixed (reference only — does not rebuild cleanly) |
 | `ScopeMeterPatchedWithoutKillSwitch.zip` | vendor install with the kill switch patched out of the binary via dnSpy; original kept as `ScopeMeter.exe.old` |
+
+## Using it as a library
+
+```python
+from et120 import Scope, resolve_port, strip_zoh, measure, export
+
+with Scope(resolve_port()) as scope:      # released on the way out, even on error
+    rec = scope.acquire()                 # a validated 2048-point record
+    strip_zoh(rec)                        # -> the ~410 real samples
+    ch = rec.channels[1]
+    print(measure(ch.volts(), rec.dt))    # {'vpp': ..., 'vrms': ..., 'freq': ...}
+    export(rec, "signal", want_pwl=True)
+```
+
+`Record.channels` maps 1 and 2 to `Channel` objects. `Channel.volts()` gives
+calibrated volts, and `rec.dt` is the sample interval. Everything the
+instrument reported about the same acquisition is on the channel too, as
+`rep_vpp`, `rep_vrms`, `rep_freq` and friends — useful for cross-checking.
 
 ## Licence
 
