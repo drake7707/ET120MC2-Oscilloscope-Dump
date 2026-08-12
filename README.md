@@ -96,13 +96,12 @@ bandwidth.
    against a ~1.3 s capture cycle:
 
    ```
-   python scope_et120.py capture -o pluck --best-of 10 --remove-dc --all
+   python scope_et120.py capture -o event --best-of 10 --remove-dc --all
    ```
 
    `--best-of N` keeps the acquisition with the largest peak-to-peak and warns
    if all N came back identical, which means the scope never re-triggered.
-   `--remove-dc` centres the result on 0 V, which is usually what you want
-   feeding an amplifier input.
+   `--remove-dc` centres the result on 0 V.
 
 5. **Match the simulation's timestep to the capture.** The PWL header comment
    gives `dt` and total length; run `.tran 0 <length> 0 <dt/2>` so LTspice
@@ -110,24 +109,21 @@ bandwidth.
 
 ### Model the source, not just the signal
 
-A PWL source in LTspice has zero output impedance. It will drive anything.
-If the real source cannot, the simulation will not reproduce the real
-behaviour no matter how good the recording is.
-
-For a piezo pickup, model it as the recorded voltage in series with the
-element's own capacitance:
+A PWL source in LTspice has zero output impedance — it will drive any load
+without sagging. Real signal sources will not. If the source you probed has a
+significant output impedance, put it in the model explicitly, in series with
+the PWL source:
 
 ```
-V1  src 0   PWL file=pluck.pwl
-C1  src in  2.2n          ; measured pickup capacitance
-Rlk in  0   1000Meg       ; leakage, optional
+V1  src 0   PWL file=event.pwl
+Rs  src in  {source_resistance}     ; or a series C for a capacitive source
 ```
 
-That series capacitance is the whole point: at 41 Hz, 2.2 nF is a source
-impedance of about 1.8 MΩ. An input stage that looks fine driven by an ideal
-source will lose most of the signal — and tilt the frequency response — when
-fed through that. Many handheld meters, including this one in DMM mode, will
-measure the pickup's capacitance for you.
+Otherwise a stage whose input impedance is too low will look fine in
+simulation and misbehave on the bench, and no amount of capture fidelity will
+show it. This matters most for high-impedance sources — sensor elements,
+high-value dividers, anything capacitive — where the source impedance can be
+comparable to or larger than the input impedance it is feeding.
 
 ## Limitations
 
@@ -186,19 +182,15 @@ Read these before planning anything around this instrument.
 * **Records are short, so plan around snapshots.** 410 points is not much if
   you were hoping to capture seconds of a signal.
 
-  A sound card is the obvious alternative — 48 kSa/s at 16 bits, continuously —
-  but only for sources it can actually load. It is the wrong answer for a
-  high-impedance source. A piezo pickup (e.g. a Realist on a double bass) is
-  effectively a capacitive source of a few nF, and a line input of ~10 kΩ forms
-  a high-pass with it at `1 / (2πRC)` ≈ 8 kHz, putting a 41 Hz low E some 46 dB
-  down. You record essentially nothing. A ×10 scope probe presents 10 MΩ, which
-  moves that corner to ≈ 8 Hz and passes the whole instrument range — so for
-  sources like this the scope really is the right front end, short records and
-  all.
-
-  (If you do want continuous recording from such a source, the missing piece is
-  a high-impedance buffer ahead of the sound card — which is likely the very
-  circuit you are simulating.)
+  For audio-rate work a sound card is the obvious alternative — 48 kSa/s at
+  16 bits, continuously — but only for sources it can load. Its input is
+  typically ~10 kΩ, which is far too low for a high-impedance source: a
+  capacitive source of a few nF feeding 10 kΩ is high-passed at
+  `1 / (2πRC)` ≈ 8 kHz, so anything low-frequency arrives tens of dB down and
+  you record essentially nothing. A ×10 scope probe presents 10 MΩ and moves
+  that corner three decades lower. For such sources this instrument is the
+  right front end despite the short records; a ×1 probe (usually 1 MΩ) is not
+  necessarily enough.
 
 ## Why bother
 

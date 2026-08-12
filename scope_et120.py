@@ -73,11 +73,11 @@ LIMITATIONS -- what this scope can and cannot give you
   repetitive signals. The nominal time axis above still applies.
 
 * Records are short, so plan around snapshots. A sound card gives 48 kSa/s
-  continuously, but only for sources it can load: a piezo pickup is a few nF
-  of capacitance, and a ~10 kOhm line input high-passes it at 1/(2*pi*R*C)
-  ~ 8 kHz, burying a 41 Hz low E some 46 dB down. A x10 scope probe presents
-  10 MOhm and moves that corner to ~8 Hz, so for high-impedance sources this
-  instrument is the right front end despite the short records.
+  continuously, but only for sources it can load: its ~10 kOhm input
+  high-passes a capacitive source of a few nF at 1/(2*pi*R*C) ~ 8 kHz, so
+  low-frequency content arrives tens of dB down. A x10 scope probe presents
+  10 MOhm and moves that corner three decades lower, so for high-impedance
+  sources this instrument is the right front end despite the short records.
 """
 
 
@@ -697,8 +697,8 @@ def cmd_info(args):
 def _acquire_best(scope, args, n):
     """Take n acquisitions and keep the one with the largest peak-to-peak.
 
-    Useful for transients you cannot time by hand -- an instrument pluck, a
-    switching event -- where most snapshots catch silence.
+    Useful for one-shot events you cannot time by hand against a ~1.3 s
+    capture cycle, where most snapshots catch nothing.
     """
     if n <= 1:
         return _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
@@ -842,8 +842,8 @@ def main(argv=None):
     p.add_argument("-n", "--count", type=int, default=1, help="number of records")
     p.add_argument("--best-of", type=int, default=1, metavar="N",
                    help="take N acquisitions per record and keep the one with the "
-                        "largest peak-to-peak (for catching plucks and other "
-                        "transients you cannot time by hand)")
+                        "largest peak-to-peak (for catching one-shot events you "
+                        "cannot time by hand)")
     p.add_argument("--dump", action="store_true", help="also save the raw serial log")
     add_acq_opts(p)
     add_export_opts(p)
