@@ -251,6 +251,43 @@ def cmd_sniff(args):
     return 0
 
 
+def cmd_unfreeze(args):
+    """Try to hand a stuck instrument back to its front panel."""
+    port = resolve_port(args.port)
+    scope = Scope(port, verbose=args.verbose)
+    try:
+        mode = scope.ping()
+        if mode is None:
+            print("%s: no reply at all -- the instrument is not answering over "
+                  "serial." % port)
+        else:
+            print("%s: answering (%s mode)."
+                  % (port, "scope" if mode == 0 else "multimeter"))
+        print("sending live-mode requests ...")
+        scope.release()
+        live = scope.read_packet(PKT_SCREEN, 2.0) is not None or mode is not None
+    finally:
+        scope.close()
+
+    print("port closed -- nothing is talking to the instrument now.\n")
+    if live:
+        print("The serial side is answering, so the link is fine. Give it a few\n"
+              "seconds; a mild lock clears once the traffic stops.\n")
+    print("If the panel is still dead it is the hard lock, and no amount of talking\n"
+          "to it over serial will clear that -- this command included. It needs\n"
+          "physical intervention, in this order:\n"
+          "\n"
+          "    1. unplug the USB cable\n"
+          "    2. power the instrument off\n"
+          "    3. power it on\n"
+          "    4. plug USB back in\n"
+          "\n"
+          "A power cycle on its own is not enough -- USB keeps the instrument alive\n"
+          "and it comes back still locked. Expect the front-panel settings to be at\n"
+          "defaults afterwards, so re-set volts/div, timebase and trigger mode.")
+    return 0
+
+
 def cmd_limits(args):
     print(LIMITATIONS)
     return 0
@@ -368,6 +405,10 @@ def build_parser():
     p.add_argument("--interval", type=float, default=1.0, metavar="SEC")
     p.add_argument("--seconds", type=float, default=6.0, metavar="SEC")
     p.set_defaults(func=cmd_sniff)
+
+    p = sub.add_parser("unfreeze",
+                       help="hand a stuck instrument back to its front panel")
+    p.set_defaults(func=cmd_unfreeze)
 
     p = sub.add_parser("limits", help="print what the hardware can and cannot do")
     p.set_defaults(func=cmd_limits)

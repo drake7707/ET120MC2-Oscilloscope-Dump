@@ -31,6 +31,7 @@ python scope_et120.py capture -o signal --all  # -> .pwl + .csv + .raw
 python scope_et120.py capture -n 10 -o run     # 10 separate records
 python scope_et120.py stored                   # what is saved on the instrument
 python scope_et120.py stored 4 -o saved --all  # fetch slot 4
+python scope_et120.py unfreeze                 # hand a stuck scope back to its panel
 python scope_et120.py limits                   # what the hardware can/cannot do
 python scope_et120.py sniff -o dump.bin        # log raw serial traffic
 python scope_et120.py decode dump.bin -o sig   # decode a dump offline
@@ -310,22 +311,26 @@ Read these before planning anything around this instrument.
   stops talking, and `Scope` is a context manager so even a crash cannot leave
   it held.
 
-* **Occasionally the lock does not clear**, and the front panel stays dead
-  even though the serial side still answers normally. If that happens:
+* **Sometimes the lock does not clear at all.** The front panel stays
+  completely dead while the serial side goes on answering ping and command 3
+  normally. **No sequence of serial commands recovers this** — `unfreeze` has
+  been tried against it and does not work. It needs physical intervention:
 
   > **unplug the USB cable, power the instrument off, power it on, then plug
   > USB back in — in that order.**
 
   A power cycle *alone is not enough*: USB keeps the instrument alive and it
-  comes back still locked. Expect the front-panel settings to be back at
-  defaults afterwards, so re-set volts/div, timebase and trigger mode before
-  capturing again. Nothing is lost from the tool's point of view — it reads
-  all settings from the instrument rather than configuring it.
+  comes back still locked. The front-panel settings return to defaults
+  afterwards, so re-set volts/div, timebase and trigger mode. Nothing is lost
+  from the tool's point of view — it reads all settings from the instrument
+  rather than configuring it.
 
-  The trigger has not been isolated. Sustained back-to-back requests are the
-  most plausible cause, so `--wait` polls unhurriedly, and a stored-waveform
-  recall is never issued until a live reply has actually been seen. If you hit
-  it during ordinary use, that is worth reporting.
+  What provokes it is long runs of command 4 (the deep record) with no command
+  3 in between. `--wait` originally polled that way and reliably caused it; it
+  now polls with the screen record and fetches the deep record once, which
+  should avoid it. **The safest route to a triggered capture is still `--hold`**:
+  arm Single on the instrument, cause the event, then collect it with a single
+  request.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from
