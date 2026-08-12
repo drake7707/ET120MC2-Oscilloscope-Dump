@@ -56,6 +56,32 @@ Sent as short frames with `PARAM = 0` unless noted.
 
 Example — ping: `A5 01 00 5A`. Deep record: `A5 04 00 57`.
 
+### There is no command to change instrument settings
+
+Every command is a request for data or a switch of which data stream is being
+sent. Nothing sets volts/div, timebase, trigger level, coupling or channel —
+the instrument is effectively read-only over serial, which is also why the
+vendor application has no controls for any of those.
+
+This was checked two ways:
+
+* Every send site in the vendor application was enumerated. `sendCommand` is
+  called with 1, 3, 4, 5, 6 and 9; `sendBytes` with `{3}`, `{4}`, `{5}`, `{6}`,
+  `{7}`, `{8}`, `{9}` and `{2, slot}`. `sendString` is never called at all —
+  it is dead code.
+* Command bytes 10–31 were sent to the hardware with `PARAM = 0`, reading the
+  instrument's settings back before and after each one. Every one produced
+  **zero bytes in reply and no change of state**, so the firmware's dispatcher
+  ignores unrecognised command codes rather than acting on them.
+
+`scope_et120.py` therefore reads the timebase and volts/div out of each packet
+and adapts to whatever the front panel is set to, rather than trying to
+command it.
+
+One loose end: `getData()` accepts packet type `0x3A` (58) alongside the
+documented `0x22`–`0x29`, but the handler switch has no case for it, so such a
+packet would be parsed and discarded. Nothing was observed to emit one.
+
 ## Packets (scope → host)
 
 Offsets below are into `TYPE || payload`, i.e. index 0 is the type byte. This
