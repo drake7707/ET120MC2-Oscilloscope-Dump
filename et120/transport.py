@@ -170,13 +170,20 @@ class Scope(object):
                       file=sys.stderr)
         raise RuntimeError("gave up after %d attempts: %s" % (tries, last))
 
-    def wait_for_trigger(self, deep=True, timeout=60.0, poll=0.2):
+    def wait_for_trigger(self, deep=True, timeout=60.0, poll=0.75):
         """Wait until the held buffer changes, i.e. a new trigger has fired.
 
         The instrument gives no explicit "triggered" status, but a held buffer
         is byte-identical on every read until it is replaced. So watching for
         it to change detects a new acquisition, which -- with the trigger set
-        to Normal -- means the event happened.
+        to Single or Normal -- means the event happened.
+
+        The poll interval is deliberately unhurried. Sustained back-to-back
+        requests are the most plausible way to provoke the remote-mode lock
+        described in README.md, which can need a full USB-disconnect and power
+        cycle to clear, so waiting a second longer for a trigger is a good
+        trade. This has not been pinned to a specific cause, so treat the
+        interval as a precaution rather than a proven fix.
 
         Returns a Record, or None if nothing triggered within the timeout.
         """

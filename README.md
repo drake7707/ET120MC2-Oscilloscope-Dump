@@ -303,12 +303,29 @@ Read these before planning anything around this instrument.
   established.
 
 * **The front panel goes unresponsive while the host is talking to it**, and
-  comes back by itself a moment after the traffic stops. That is the
+  normally comes back by itself a moment after the traffic stops. That is the
   instrument's behaviour, not a bug in this tool; the vendor application does
   it too. Polling it to "make sure" it is released makes things worse, since
   every extra command re-freezes it. The tool leaves it in live mode and then
   stops talking, and `Scope` is a context manager so even a crash cannot leave
   it held.
+
+* **Occasionally the lock does not clear**, and the front panel stays dead
+  even though the serial side still answers normally. If that happens:
+
+  > **unplug the USB cable, power the instrument off, power it on, then plug
+  > USB back in — in that order.**
+
+  A power cycle *alone is not enough*: USB keeps the instrument alive and it
+  comes back still locked. Expect the front-panel settings to be back at
+  defaults afterwards, so re-set volts/div, timebase and trigger mode before
+  capturing again. Nothing is lost from the tool's point of view — it reads
+  all settings from the instrument rather than configuring it.
+
+  The trigger has not been isolated. Sustained back-to-back requests are the
+  most plausible cause, so `--wait` polls unhurriedly, and a stored-waveform
+  recall is never issued until a live reply has actually been seen. If you hit
+  it during ordinary use, that is worth reporting.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from

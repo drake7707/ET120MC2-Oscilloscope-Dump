@@ -288,6 +288,17 @@ holding a deep record or a recalled waveform, read the reply so nothing is
 half-sent, and then stop talking to it. `Scope` does this from `release()`, and
 is a context manager so a crash cannot leave the instrument held.
 
+Occasionally the lock does not clear on its own: the front panel stays dead
+while the serial side keeps answering ping and command 3 normally. Recovery is
+to **unplug USB, power off, power on, then reconnect USB** — a power cycle
+alone does not work, because USB keeps the instrument alive and it returns
+still locked. The front-panel settings are back at defaults afterwards.
+
+The trigger has not been isolated. Issuing command 2 while the instrument is
+not live reliably wedges the serial interface for a while, and sustained
+back-to-back requests are the obvious suspect for the harder lock, but neither
+has been shown to cause it.
+
 ## Notes on the vendor application
 
 * Its FFT frequency axis uses a hard-coded `calibration_ratio_x = 15`, where
