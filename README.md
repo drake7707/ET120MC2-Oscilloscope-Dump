@@ -103,9 +103,24 @@ bandwidth.
    if all N came back identical, which means the scope never re-triggered.
    `--remove-dc` centres the result on 0 V.
 
-5. **Match the simulation's timestep to the capture.** The PWL header comment
+5. **Check it before you simulate it.** `--plot` draws the capture, with the
+   ADC's full-scale limits marked and the fraction of that range actually in
+   use. Bare `--plot` opens a window, `--plot FILE` writes a PNG. With 8 bits
+   there is not much resolution to spare, so anything much under half the
+   range is worth re-scaling and re-taking. Needs `matplotlib`, which is
+   otherwise not required.
+
+6. **Match the simulation's timestep to the capture.** The PWL header comment
    gives `dt` and total length; run `.tran 0 <length> 0 <dt/2>` so LTspice
    does not step over your samples.
+
+7. **If you need a longer stimulus than one record**, `--loop` trims the
+   capture to a whole number of cycles, matched in value and slope, so
+   `--repeat N` tiles it into a continuous signal instead of stepping at every
+   wrap. Tiling an unaligned record injects a step discontinuity that the
+   simulated circuit will respond to and that is not in the real signal. Only
+   meaningful for sustained, quasi-periodic captures — a decaying transient
+   has no period to align to, and the tool will say so and leave it alone.
 
 ### Model the source, not just the signal
 

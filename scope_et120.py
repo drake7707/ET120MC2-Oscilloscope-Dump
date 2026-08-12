@@ -357,6 +357,84 @@ def detect_zoh(raw, max_factor=16, threshold=0.90):
     return factor, phase, score
 
 
+def trim_to_loop(rec, channel=None):
+    """Trim the record to a whole number of fundamental cycles.
+
+    Tiling a record that does not start and end at the same point in its cycle
+    injects a step discontinuity at every wrap -- a transient that is not in
+    the real signal but that the simulated circuit will respond to. Trimming to
+    an integer number of periods, matched in both value and slope, makes
+    --repeat produce a genuinely continuous stimulus.
+
+    Returns (ok, message). Only meaningful for sustained, quasi-periodic
+    signals; a decaying transient has no period to align to.
+    """
+    nums = sorted(rec.channels)
+    ref = rec.channels[channel if channel in rec.channels else nums[0]]
+    v = ref.volts()
+    n = len(v)
+    if n < 64:
+        return False, "record too short to loop-align"
+
+    m = measure(v, rec.dt)
+    if m["freq"] <= 0:
+        return False, "no periodicity found; leaving the record untrimmed"
+    period = 1.0 / (m["freq"] * rec.dt)          # fundamental period, in samples
+    if not np.isfinite(period) or period < 4 or period > n / 2.0:
+        return False, ("fundamental spans %.3g samples of %d; need at least two "
+                       "cycles to loop-align" % (period, n))
+
+    z = v - v.mean()
+    d = np.gradient(z)
+    vscale = float(np.abs(z).max()) or 1.0
+    dscale = float(np.abs(d).max()) or 1.0
+
+    # Candidate start points: upward zero crossings, plus the record start.
+    # With harmonics there can be several crossings per cycle and the first one
+    # is not necessarily the best place to cut, so score them all.
+    # Only within the first period: starting later just discards a whole cycle
+    # for no gain, since every phase is already reachable inside one period.
+    ups = [int(u) for u in np.nonzero((z[:-1] <= 0) & (z[1:] > 0))[0]
+           if u < period]
+    starts = [0] + ups[:8]
+
+    best = None
+    for start in starts:
+        cycles = int((n - 1 - start) // period)
+        if cycles < 1:
+            continue
+        target = start + cycles * period
+        lo = max(start + 1, int(target - period / 4.0))
+        hi = min(n, int(target + period / 4.0) + 1)
+        if hi <= lo:
+            continue
+        idx = np.arange(lo, hi)
+        # Match value and slope at the wrap: sample `end` is the first one not
+        # included, so for a clean periodic extension it should look like
+        # sample `start`.
+        cost = ((z[idx] - z[start]) / vscale) ** 2 + ((d[idx] - d[start]) / dscale) ** 2
+        j = int(np.argmin(cost))
+        if best is None or cost[j] < best[0]:
+            best = (float(cost[j]), start, int(idx[j]), cycles)
+
+    if best is None:
+        return False, "could not bracket a loop end point"
+    _, start, end, cycles = best
+
+    for ch in rec.channels.values():
+        ch.raw = ch.raw[start:end].copy()
+
+    # Report the wrap quality against the local sample-to-sample step: a wrap
+    # at a steep part of the waveform is *supposed* to step. A ratio near or
+    # below 1 means the seam is indistinguishable from an ordinary sample.
+    seam = abs(float(v[start]) - float(v[end - 1]))
+    local = abs(float(v[start + 1]) - float(v[start])) if start + 1 < n else 0.0
+    ratio = (seam / local) if local > 1e-12 else float("inf")
+    return True, ("trimmed to %d cycle(s), %d points, %.6g s; wrap step %.4g V "
+                  "(%.1fx the local sample step)"
+                  % (cycles, end - start, (end - start) * rec.dt, seam, ratio))
+
+
 def strip_zoh(rec):
     """Collapse the padding in place, recovering the real samples.
 
@@ -522,13 +600,21 @@ def describe(rec, stream=sys.stdout):
     for num in sorted(rec.channels):
         ch = rec.channels[num]
         m = measure(ch.volts(), rec.dt)
-        print("  CH%d  %.6g V/div (probe x%d)"
-              % (num, ch.volts_per_div, 10 ** ch.probe_exp), file=stream)
+        used = (float(ch.raw.max()) - float(ch.raw.min())) / 255.0
+        print("  CH%d  %.6g V/div (probe x%d)   using %.0f%% of the ADC range"
+              % (num, ch.volts_per_div, 10 ** ch.probe_exp, used * 100), file=stream)
         print("       decoded  Vpp %-9.4g +Vp %-9.4g -Vp %-9.4g Vrms %-9.4g f %.6g Hz"
               % (m["vpp"], m["vmax"], m["vmin"], m["vrms"], m["freq"]), file=stream)
         print("       scope    Vpp %-9.4g +Vp %-9.4g -Vp %-9.4g Vrms %-9.4g f %.6g Hz"
               % (ch.rep_vpp, ch.rep_vp_pos, ch.rep_vp_neg, ch.rep_vrms, ch.rep_freq),
               file=stream)
+        if used < 0.25:
+            print("       NOTE: only %.0f%% of the ADC range is in use -- with 8 bits "
+                  "that is\n             coarse. Turn up the V/div sensitivity if you "
+                  "can." % (used * 100), file=stream)
+        if ch.raw.min() == 0 or ch.raw.max() == 255:
+            print("       WARNING: samples reach the end of the ADC range; the capture "
+                  "may be clipped.", file=stream)
         if ch.clipped:
             print("       WARNING: trace is clipped at the edge of the display; "
                   "voltages are wrong.", file=stream)
@@ -607,17 +693,15 @@ def write_ltspice_raw(path, t, channels, title="ET120MC2 capture"):
     return path
 
 
-def export(rec, stem, want_pwl=True, want_csv=False, want_raw=False,
-           channel=None, repeat=1, quiet=False, remove_dc=False):
+def channel_series(rec, channel=None, remove_dc=False, quiet=True):
+    """Return (t, [(name, volts), ...]) exactly as the exporters see it."""
     t = np.arange(rec.npoints, dtype=np.float64) * rec.dt
-
     nums = sorted(rec.channels)
     if channel is not None:
         if channel not in rec.channels:
             raise SystemExit("CH%d is not active in this capture (active: %s)"
                              % (channel, ", ".join("CH%d" % c for c in nums)))
         nums = [channel]
-
     named = []
     for n in nums:
         v = rec.channels[n].volts()
@@ -627,6 +711,81 @@ def export(rec, stem, want_pwl=True, want_csv=False, want_raw=False,
             if not quiet:
                 print("  ch%d: removed %.4g V DC offset" % (n, offset))
         named.append(("ch%d" % n, v))
+    return t, named
+
+
+def _time_unit(span):
+    for factor, name in ((1.0, "s"), (1e3, "ms"), (1e6, "us"), (1e9, "ns")):
+        if span * factor >= 1.0:
+            return factor, name
+    return 1e9, "ns"
+
+
+def plot_record(rec, path=None, channel=None, remove_dc=False, title=None):
+    """Show or save a plot of the capture, with the ADC's range marked.
+
+    matplotlib is optional; it is only needed for this.
+    """
+    try:
+        import matplotlib
+        if path:
+            matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("--plot needs matplotlib:  python -m pip install matplotlib",
+              file=sys.stderr)
+        return False
+
+    t, named = channel_series(rec, channel, remove_dc)
+    factor, unit = _time_unit(rec.duration)
+    ts = t * factor
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for (name, v), colour in zip(named, ("tab:red", "tab:olive")):
+        num = int(name[2:])
+        ch = rec.channels[num]
+        m = measure(v, rec.dt)
+        ax.plot(ts, v, colour, lw=1.0,
+                label="CH%d  %.4g Vpp, %.4g Vrms, %.6g Hz"
+                      % (num, m["vpp"], m["vrms"], m["freq"]))
+        # How much of the 8-bit range the capture actually uses. Low numbers
+        # mean resolution is being thrown away -- turn up the V/div sensitivity.
+        used = (float(ch.raw.max()) - float(ch.raw.min())) / 255.0
+        if rec.deep:
+            # Shift the limits by whatever --remove-dc subtracted, so the
+            # headroom shown stays the real headroom.
+            shift = float(ch.volts().mean()) if remove_dc else 0.0
+            lo = (0.0 - DEEP_ZERO_CODE) / DEEP_COUNTS_PER_DIV * ch.volts_per_div - shift
+            hi = (255.0 - DEEP_ZERO_CODE) / DEEP_COUNTS_PER_DIV * ch.volts_per_div - shift
+            ax.axhline(lo, color=colour, ls=":", lw=0.8, alpha=0.5)
+            ax.axhline(hi, color=colour, ls=":", lw=0.8, alpha=0.5)
+            ax.text(ts[-1], hi, " CH%d ADC full scale (%.0f%% used)" % (num, used * 100),
+                    color=colour, fontsize=8, va="bottom", ha="right")
+
+    tb = (SECS_PER_DIV_S[rec.timebase_index]
+          if rec.timebase_index < len(SECS_PER_DIV_S) else "?")
+    ax.set_title(title or ("ET120MC2  %s  %s/div  %d pts  %.6g Sa/s"
+                           % ("deep" if rec.deep else "screen", tb, rec.npoints,
+                              1.0 / rec.dt if rec.dt else 0.0)))
+    ax.set_xlabel("time (%s)" % unit)
+    ax.set_ylabel("volts")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=8)
+    ax.margins(x=0)
+    fig.tight_layout()
+
+    if path:
+        fig.savefig(path, dpi=120)
+        plt.close(fig)
+        print("  wrote %s" % path)
+    else:
+        plt.show()
+    return True
+
+
+def export(rec, stem, want_pwl=True, want_csv=False, want_raw=False,
+           channel=None, repeat=1, quiet=False, remove_dc=False):
+    t, named = channel_series(rec, channel, remove_dc, quiet=quiet)
     written = []
     if want_pwl:
         for name, v in named:
@@ -679,6 +838,16 @@ def _connect(args):
 def _prep(rec, args):
     if not args.keep_zoh and rec.deep:
         strip_zoh(rec)
+    if getattr(args, "loop", False):
+        ok, why = trim_to_loop(rec, getattr(args, "channel", None))
+        print("  loop-align: %s" % why)
+        if not ok and getattr(args, "repeat", 1) > 1:
+            print("              --repeat will therefore step at each wrap.",
+                  file=sys.stderr)
+    elif getattr(args, "repeat", 1) > 1:
+        print("  note: --repeat without --loop tiles the record as captured, so the "
+              "waveform\n        steps at each wrap unless it happens to be "
+              "period-aligned.", file=sys.stderr)
     return rec
 
 
@@ -688,6 +857,8 @@ def cmd_info(args):
         print("connected on %s" % args.port)
         rec = _prep(scope.acquire(deep=not args.screen, settle=args.settle), args)
         describe(rec)
+        if args.plot:
+            plot_record(rec, None if args.plot == "-" else args.plot)
     finally:
         scope.release()
         scope.close()
@@ -729,6 +900,9 @@ def cmd_capture(args):
             describe(rec)
             export(rec, label, want_pwl, args.all or args.csv, args.all or args.raw,
                    channel=args.channel, repeat=args.repeat, remove_dc=args.remove_dc)
+            if args.plot:
+                plot_record(rec, None if args.plot == "-" else args.plot,
+                            channel=args.channel, remove_dc=args.remove_dc)
             if args.dump:
                 with open("%s.bin" % label, "wb") as fh:
                     fh.write(scope.log)
@@ -765,6 +939,9 @@ def cmd_decode(args):
         export(chosen, os.path.splitext(args.output)[0], want_pwl,
                args.all or args.csv, args.all or args.raw,
                channel=args.channel, repeat=args.repeat, remove_dc=args.remove_dc)
+    if args.plot:
+        plot_record(chosen, None if args.plot == "-" else args.plot,
+                    channel=args.channel, remove_dc=args.remove_dc)
     return 0
 
 
@@ -827,6 +1004,12 @@ def main(argv=None):
                        help="tile the PWL N times for a longer transient run")
         p.add_argument("--remove-dc", action="store_true",
                        help="subtract the mean, so the waveform is centred on 0 V")
+        p.add_argument("--loop", action="store_true",
+                       help="trim to a whole number of cycles so --repeat tiles "
+                            "without a step at each wrap (sustained signals only)")
+        p.add_argument("--plot", nargs="?", const="-", metavar="FILE",
+                       help="plot the capture to check it; bare --plot opens a "
+                            "window, --plot FILE writes a PNG (needs matplotlib)")
         p.add_argument("--keep-zoh", action="store_true",
                        help="keep the scope's 5x sample padding instead of collapsing it")
 
@@ -836,6 +1019,9 @@ def main(argv=None):
     p = sub.add_parser("info", help="connect and report one acquisition")
     add_acq_opts(p)
     p.add_argument("--keep-zoh", action="store_true")
+    p.add_argument("--plot", nargs="?", const="-", metavar="FILE",
+                   help="plot the acquisition; bare --plot opens a window, "
+                        "--plot FILE writes a PNG (needs matplotlib)")
     p.set_defaults(func=cmd_info)
 
     p = sub.add_parser("capture", help="capture waveform(s) and export")
