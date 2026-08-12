@@ -126,10 +126,22 @@ Read these before planning anything around this instrument.
   frequency counter will report nonsense too. The script warns when the
   dominant frequency exceeds 40 % of Nyquist.
 
-* **For continuous audio-rate recording this is the wrong instrument.** A PC
-  sound card gives 48 kSa/s at 16 bits, continuously, for the price of a cable.
-  Use this scope for short, well-triggered snapshots where you need the
-  probe's input range and DC coupling.
+* **Records are short, so plan around snapshots.** 410 points is not much if
+  you were hoping to capture seconds of a signal.
+
+  A sound card is the obvious alternative — 48 kSa/s at 16 bits, continuously —
+  but only for sources it can actually load. It is the wrong answer for a
+  high-impedance source. A piezo pickup (e.g. a Realist on a double bass) is
+  effectively a capacitive source of a few nF, and a line input of ~10 kΩ forms
+  a high-pass with it at `1 / (2πRC)` ≈ 8 kHz, putting a 41 Hz low E some 46 dB
+  down. You record essentially nothing. A ×10 scope probe presents 10 MΩ, which
+  moves that corner to ≈ 8 Hz and passes the whole instrument range — so for
+  sources like this the scope really is the right front end, short records and
+  all.
+
+  (If you do want continuous recording from such a source, the missing piece is
+  a high-impedance buffer ahead of the sound card — which is likely the very
+  circuit you are simulating.)
 
 ## Why bother
 

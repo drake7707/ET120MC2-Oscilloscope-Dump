@@ -72,9 +72,12 @@ LIMITATIONS -- what this scope can and cannot give you
   equivalent-time sampling, so fast-timebase records are only meaningful for
   repetitive signals. The nominal time axis above still applies.
 
-* For continuous audio-rate recording (e.g. an instrument pickup over seconds)
-  this instrument is the wrong tool -- a PC sound card gives you 48 kSa/s at
-  16 bits, continuously. Use this scope for short, well-triggered snapshots.
+* Records are short, so plan around snapshots. A sound card gives 48 kSa/s
+  continuously, but only for sources it can load: a piezo pickup is a few nF
+  of capacitance, and a ~10 kOhm line input high-passes it at 1/(2*pi*R*C)
+  ~ 8 kHz, burying a 41 Hz low E some 46 dB down. A x10 scope probe presents
+  10 MOhm and moves that corner to ~8 Hz, so for high-impedance sources this
+  instrument is the right front end despite the short records.
 """
 
 
