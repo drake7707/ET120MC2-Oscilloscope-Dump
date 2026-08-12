@@ -330,18 +330,21 @@ Read these before planning anything around this instrument.
   No serial command recovers this state — `unfreeze` included; it is worth one
   try for the milder lock above, but do not keep poking a hot instrument.
 
-  The likely trigger is the serial control lines rather than anything sent
-  over them. pyserial asserts DTR and RTS when it opens a port; the vendor
-  application never sets either, so .NET's defaults leave both low. A USB-CDC
-  device whose firmware reacts to those lines can hang when they toggle — the
-  same mechanism that auto-resets an Arduino — and it fits the symptom of
-  hanging on exchanges as small as a ping. This tool now opens the port with
-  both lines low, matching the vendor application.
+  **The cause is not known.** It has been seen after exchanges as small as a
+  ping plus two live-mode requests, so it is not simply a matter of sending too
+  much or sending the wrong command. The port configuration now matches the
+  vendor application exactly — including DTR and RTS held low, which pyserial
+  otherwise raises — and that did not stop it.
+
+  What is left pointing at the instrument rather than the host: the heat, which
+  means firmware spinning rather than a protocol state; the serial interface
+  continuing to answer from interrupt context while the main loop is dead; and
+  the fact that no command sequence recovers it.
 
   Long runs of deep-record (command 4) requests with no command 3 between them
-  are a separate hazard, so nothing here polls that way and the tool warns if
-  anything issues 20 in a row. If a hang would be costly, `--screen` uses only
-  command 3.
+  are a separate and better-established hazard, so nothing here polls that way
+  and the tool warns if anything issues 20 in a row. If a hang would be costly,
+  `--screen` uses only command 3.
 
 * **Fast timebases use equivalent-time sampling.** No handheld scope samples at
   5 GSa/s. Above the ADC's real-time rate the instrument builds the record from
