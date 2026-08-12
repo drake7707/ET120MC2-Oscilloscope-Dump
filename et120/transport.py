@@ -60,30 +60,53 @@ class Scope(object):
         serial = _import_serial()
         self.port_name = port
         try:
-            # Open without asserting DTR or RTS. pyserial raises both by
-            # default, and a USB-CDC device whose firmware reacts to those
-            # lines can reset or hang when they toggle -- the same mechanism
-            # that auto-resets an Arduino. This instrument has hung on
-            # exchanges as small as a ping plus two live-mode requests, which
-            # points at the act of opening the port rather than at anything
-            # sent over it. Setting the states before open() makes pyserial
-            # apply them as part of configuring the port, so the lines are
-            # never driven high.
+            # Match the vendor application's port configuration exactly. It
+            # uses .NET's SerialPort and sets only BaudRate, Parity, StopBits,
+            # DataBits and ReadBufferSize, leaving everything else at the .NET
+            # defaults -- which differ from pyserial's in ways that matter:
+            #
+            #   property        vendor (.NET)     pyserial default
+            #   DtrEnable       false             dtr = True
+            #   RtsEnable       false             rts = True
+            #   Handshake       None              (equivalent)
+            #   ReadBufferSize  100000            4096
+            #
+            # DTR and RTS are the important pair. pyserial raises both on open,
+            # and a USB-CDC device whose firmware reacts to those lines can
+            # hang or reset when they toggle -- the mechanism behind Arduino
+            # auto-reset. This instrument has hung on exchanges as small as a
+            # ping plus two live-mode requests, which implicates opening the
+            # port rather than anything sent over it. Setting the states before
+            # open() makes pyserial apply them while configuring the port, so
+            # the lines are never driven high at all.
             self.sp = serial.Serial()
             self.sp.port = port
             self.sp.baudrate = baud
-            self.sp.timeout = 0.05
-            self.sp.dsrdtr = False
+            self.sp.bytesize = serial.EIGHTBITS
+            self.sp.parity = serial.PARITY_NONE
+            self.sp.stopbits = serial.STOPBITS_ONE
+            self.sp.xonxoff = False          # Handshake.None
             self.sp.rtscts = False
-            self.sp.xonxoff = False
+            self.sp.dsrdtr = False
             self.sp.dtr = False
             self.sp.rts = False
+            self.sp.inter_byte_timeout = None
+            self.sp.write_timeout = None     # .NET WriteTimeout: infinite
+            # Host-side read timeout only; the vendor polls BytesToRead
+            # instead, which amounts to the same non-blocking behaviour.
+            self.sp.timeout = 0.05
             self.sp.open()
             try:
                 self.sp.dtr = False
                 self.sp.rts = False
             except Exception:
-                pass                      # not all drivers allow this
+                pass                      # not every driver permits this
+            # A 4 kB driver buffer is small against 4254-byte packets; the
+            # vendor asks for 100000. Windows-only in pyserial.
+            try:
+                self.sp.set_buffer_size(rx_size=100000, tx_size=2048)
+            except Exception:
+                pass
         except Exception as exc:
             hint = ("If the port is busy, close the vendor ScopeMeter application -- "
                     "it holds\nthe port exclusively.")
