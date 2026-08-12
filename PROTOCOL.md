@@ -288,16 +288,29 @@ holding a deep record or a recalled waveform, read the reply so nothing is
 half-sent, and then stop talking to it. `Scope` does this from `release()`, and
 is a context manager so a crash cannot leave the instrument held.
 
-Occasionally the lock does not clear on its own: the front panel stays dead
-while the serial side keeps answering ping and command 3 normally. Recovery is
-to **unplug USB, power off, power on, then reconnect USB** — a power cycle
-alone does not work, because USB keeps the instrument alive and it returns
-still locked. The front-panel settings are back at defaults afterwards.
+### Command 3 hangs an instrument holding a Single-shot
 
-The trigger has not been isolated. Issuing command 2 while the instrument is
-not live reliably wedges the serial interface for a while, and sustained
-back-to-back requests are the obvious suspect for the harder lock, but neither
-has been shown to cause it.
+**Do not send command 3 while the trigger is set to Single and has fired.**
+Asking the instrument to return to live mode from a held Single-shot
+acquisition hangs its firmware: the front panel dies, the instrument gets
+warm, and the serial side goes on answering normally from interrupt context.
+
+Recovery is physical — **unplug USB, power off, power on, then reconnect
+USB**. A power cycle alone does not work, because the instrument is
+bus-powered and never actually loses power; it returns still hung. Front-panel
+settings are back at defaults afterwards, which confirms the state lived in
+RAM rather than being latched anywhere.
+
+In Auto mode command 3 is harmless; sustained traffic at 3 commands/s and
+repeated open/close cycling were both run deliberately without provoking it.
+
+`Scope.avoid_live` suppresses every command 3, including the one `release()`
+would otherwise send on the way out. Set it whenever a held trigger may be
+present. Note this also rules out `ensure_live()`, and therefore stored-waveform
+recall, while a Single-shot is held.
+
+Separately, issuing command 2 while the instrument is not live wedges the
+serial interface for a while, though it recovers on its own.
 
 ## Notes on the vendor application
 

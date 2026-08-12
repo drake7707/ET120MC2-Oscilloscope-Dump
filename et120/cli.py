@@ -145,6 +145,11 @@ def cmd_capture(args):
                  "same held\nbuffer every time, so every candidate would be "
                  "identical. Use one or the other.")
     scope = _connect(args)
+    if args.hold:
+        # --hold exists for a held trigger, so assume Single mode and never
+        # send a live-mode request: doing so from a held Single-shot hangs the
+        # instrument. That also means the instrument is left exactly as it was.
+        scope.avoid_live = True
     stem = os.path.splitext(args.output)[0] if args.output else "capture"
     pending = []
     with scope:
@@ -245,6 +250,14 @@ def cmd_sniff(args):
 
 def cmd_unfreeze(args):
     """Try to hand a stuck instrument back to its front panel."""
+    if not args.yes:
+        sys.exit(
+            "unfreeze sends a live-mode request, and doing that while the "
+            "instrument is\nholding a Single-shot acquisition hangs it -- the very "
+            "failure this command\nexists to recover from.\n"
+            "\n"
+            "Take the instrument off Single first (or confirm it is not holding a\n"
+            "triggered capture), then re-run with --yes.")
     port = resolve_port(args.port)
     scope = Scope(port, verbose=args.verbose)
     try:
@@ -401,6 +414,10 @@ def build_parser():
 
     p = sub.add_parser("unfreeze",
                        help="hand a stuck instrument back to its front panel")
+    p.add_argument("--yes", action="store_true",
+                   help="confirm the instrument is NOT holding a Single-shot "
+                        "acquisition; sending a live-mode request from that state "
+                        "hangs it")
     p.set_defaults(func=cmd_unfreeze)
 
     p = sub.add_parser("limits", help="print what the hardware can and cannot do")

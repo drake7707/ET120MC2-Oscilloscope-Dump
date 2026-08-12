@@ -330,20 +330,29 @@ Read these before planning anything around this instrument.
   No serial command recovers this state — `unfreeze` included; it is worth one
   try for the milder lock above, but do not keep poking a hot instrument.
 
-  **The cause is not pinned down, but command pacing is strongly implicated.**
-  The vendor application polls once a second and reads continuously in
-  between, and never disturbs the instrument. Reproducing exactly that cadence
-  from Python — one command per second, port held open — ran for 90 seconds
-  with no hang. Issuing commands back to back does hang it, sometimes after
-  only a handful.
+  **The cause: asking the instrument to go live while it is holding a
+  Single-shot acquisition.** That is command 3, the live/screen request, sent
+  while the trigger is set to Single and has fired. It hangs reproducibly. In
+  Auto mode the same command is harmless — sustained traffic at 3 commands/s
+  ran clean.
 
-  So commands are paced at one per second by default, matching the vendor.
-  That is why a capture takes seconds rather than milliseconds. `--interval`
-  changes it; lowering it is faster and has been seen to hang the instrument.
+  The tool never sends command 3 once `--hold` is in play, release included,
+  so a held trigger is collected and the instrument left exactly as it was.
+  `unfreeze` sends command 3 by definition and therefore refuses to run
+  without `--yes`, since running it on a Single-shot instrument causes the
+  very failure it is meant to recover from.
 
-  (The port configuration also matches the vendor application exactly now,
-  DTR and RTS held low included, which pyserial otherwise raises. That turned
-  out not to be the cause, but there is no reason to differ.)
+  If you are driving the instrument yourself through the library, set
+  `Scope.avoid_live = True` whenever a Single-shot capture may be held.
+
+  Commands are also paced at one per second by default, matching the vendor
+  application. `--interval` lowers it; 0.25 s has tested clean. The port
+  configuration matches the vendor exactly too, including DTR and RTS held
+  low, which pyserial otherwise raises.
+
+* **Expect the display to stutter while the tool is talking to the
+  instrument.** Each connection briefly stalls the front panel, and it
+  recovers on its own. That is normal and distinct from the hang above.
 
   Long runs of deep-record (command 4) requests with no command 3 between them
   are a separate and better-established hazard, so nothing here polls that way

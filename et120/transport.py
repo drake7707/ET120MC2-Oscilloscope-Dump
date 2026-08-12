@@ -62,6 +62,11 @@ class Scope(object):
         self.min_interval = (self.MIN_COMMAND_INTERVAL if min_interval is None
                              else min_interval)
         self._last_send = 0.0
+        # Set this before doing anything when the instrument may be holding a
+        # Single-shot acquisition. Command 3 asks it to go live, and issuing
+        # that from a held Single-shot hangs the firmware hard enough to need
+        # a USB disconnect and power cycle.
+        self.avoid_live = False
         try:
             # Match the vendor application's port configuration exactly. It
             # uses .NET's SerialPort and sets only BaudRate, Parity, StopBits,
@@ -201,11 +206,19 @@ class Scope(object):
     def ensure_live(self, tries=8):
         """Put the instrument in live mode, verifying that it actually replies.
 
+        Never call this when the instrument may be holding a Single-shot
+        acquisition; see avoid_live.
+
         Sending cmd 3 is not enough on its own -- after a deep-record or stored
         recall the instrument can need several goes, and a recall issued while
         it is not live simply wedges the serial interface for a while. So we
         keep going until a screen packet actually comes back.
         """
+        if self.avoid_live:
+            raise RuntimeError(
+                "refusing to send a live-mode request: the instrument may be "
+                "holding a\nSingle-shot acquisition, and asking it to go live from "
+                "there hangs it.")
         for _ in range(tries):
             self.drain()
             self.send(CMD_SCREEN)
@@ -309,6 +322,13 @@ class Scope(object):
     def release(self):
         """Hand the instrument back to its front panel before disconnecting.
 
+        Does nothing when avoid_live is set. Asking the instrument to go live
+        while it is holding a Single-shot acquisition hangs its firmware --
+        reproducibly -- so anything working with a held trigger must not send
+        command 3 at all, release included. There is nothing to hand back in
+        that case anyway: the instrument was never taken out of the state the
+        user put it in.
+
         The front panel is unresponsive for as long as the host keeps issuing
         commands; it comes back by itself shortly after the traffic stops. So
         the release is: leave it in live mode rather than holding a deep record
@@ -317,6 +337,8 @@ class Scope(object):
         counterproductive -- each extra command re-freezes the panel, and the
         last one would leave it freshly frozen on the way out.
         """
+        if self.avoid_live:
+            return True
         try:
             # Two spaced live-mode requests, not a tight retry loop. One is
             # sometimes not enough to get the instrument out of remote hold
